@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Annotated, Any, cast
 
-from mcp.server.fastmcp import Context
+from mcp.server.mcpserver import Context
 from pydantic import Field
 
 from charles_mcp.client import CharlesClientError
@@ -53,7 +53,7 @@ class ToolDependencies:
     restore_config_fn: Callable[[Config], Awaitable[bool]]
 
 
-ToolContext = Context[Any, ToolDependencies, Any]
+ToolContext = Context[ToolDependencies, Any]
 _TOOL_DEPENDENCIES_ATTR = "_charles_tool_dependencies"
 
 
@@ -65,8 +65,8 @@ def get_tool_dependencies(ctx: ToolContext) -> ToolDependencies:
     try:
         return ctx.request_context.lifespan_context
     except ValueError:
-        fastmcp = ctx.fastmcp
-        deps = getattr(fastmcp, _TOOL_DEPENDENCIES_ATTR, None)
+        server = ctx.mcp_server
+        deps = getattr(server, _TOOL_DEPENDENCIES_ATTR, None)
         if deps is None:
             raise ValueError("Tool dependencies are unavailable outside of a request") from None
         return cast(ToolDependencies, deps)
@@ -227,14 +227,6 @@ def guidance_error_message(error_payload: list[dict]) -> str:
     return "; ".join(parts)
 
 
-async def safe_ctx_log(ctx: Context, level: str, message: str) -> None:
-    try:
-        log_fn = getattr(ctx, level)
-        await log_fn(message)
-    except ValueError:
-        logger.debug("Skipping ctx.%s log outside request context: %s", level, message)
-
-
 def backup_config(config: Config) -> bool:
     if not config.config_path or not os.path.exists(config.config_path):
         logger.warning("找不到 Charles 配置文件: %s", config.config_path)
@@ -284,7 +276,6 @@ async def restore_config(config: Config, *, client_factory: Any) -> bool:
 
 async def get_proxy_data(
     record_seconds: int,
-    ctx: Context,
     *,
     deps: ToolDependencies,
 ) -> list[dict]:
@@ -292,13 +283,13 @@ async def get_proxy_data(
 
     if record_seconds > 0:
         try:
-            await safe_ctx_log(ctx, "info", "正在操作 Charles 录制流量...")
+            logger.info("正在操作 Charles 录制流量...")
             async with deps.client_factory(deps.config) as client:
                 save_path = client.get_full_save_path()
 
                 async def on_progress(current: int, total: int) -> None:
                     remaining = total - current
-                    await safe_ctx_log(ctx, "info", f"录制中... 剩余 {remaining}s")
+                    logger.info("录制中... 剩余 %ss", remaining)
 
                 return cast(
                     list[dict],
@@ -311,12 +302,10 @@ async def get_proxy_data(
         except CharlesClientError as exc:
             err_msg = f"抓包过程出错: {exc}"
             logger.error(err_msg)
-            await safe_ctx_log(ctx, "error", err_msg)
             return [{"error": str(exc)}]
         except Exception as exc:  # pragma: no cover - defensive logging path
             err_msg = f"未预期的错误: {exc}"
             logger.error(err_msg, exc_info=True)
-            await safe_ctx_log(ctx, "error", err_msg)
             return [{"error": str(exc)}]
 
     try:

@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 import charles_mcp.reverse.server as server_module
@@ -6,7 +8,9 @@ from charles_mcp.reverse.server import create_server
 
 
 def _tool_result(call_result):
-    payload = call_result[1]
+    payload = call_result.structured_content
+    if payload is None:
+        payload = json.loads(call_result.content[0].text)
     return payload["result"] if isinstance(payload, dict) and "result" in payload else payload
 
 
@@ -53,7 +57,7 @@ async def test_vnext_live_tool_schema_limits_snapshot_format_values() -> None:
     }
 
     for tool_name in live_tool_names:
-        snapshot_format = tools[tool_name].inputSchema["properties"]["snapshot_format"]
+        snapshot_format = tools[tool_name].input_schema["properties"]["snapshot_format"]
         assert snapshot_format["enum"] == ["xml", "native"]
         assert snapshot_format["default"] == "xml"
 
@@ -78,4 +82,3 @@ async def test_vnext_start_live_analysis_coerces_summary_snapshot_format(monkeyp
     assert result["input_warnings"] == [
         "`snapshot_format=summary` is deprecated for live-session tools; using `xml`."
     ]
-

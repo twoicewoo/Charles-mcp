@@ -9,7 +9,9 @@ from charles_mcp.server import create_server
 
 
 def _tool_result(call_result):
-    payload = call_result[1]
+    payload = call_result.structured_content
+    if payload is None:
+        payload = json.loads(call_result.content[0].text)
     return payload["result"] if isinstance(payload, dict) and "result" in payload else payload
 
 
@@ -19,7 +21,7 @@ def _tool_output_schema(tool_name: str) -> dict | None:
         tools = await server.list_tools()
         for tool in tools:
             if tool.name == tool_name:
-                return tool.outputSchema
+                return tool.output_schema
         return None
 
     return asyncio.run(_get_schema())

@@ -103,6 +103,8 @@ class LiveAnalysisService:
         advance: bool = True,
     ) -> dict:
         self._prune_expired_sessions()
+        if limit <= 0:
+            raise ValueError("limit must be greater than 0")
         state = self._require(live_session_id)
         state.last_access_monotonic = time.monotonic()
         imported = await self._snapshot_current_session(snapshot_format=snapshot_format)
@@ -121,19 +123,29 @@ class LiveAnalysisService:
             offset=0,
         )
         non_control_entries = [entry for entry in all_entries if entry.host != "control.charles"]
-        unseen_entries = non_control_entries[state.cursor_transaction_count :]
-        filtered_entries = [
-            entry for entry in unseen_entries if _entry_matches(
+        start_cursor = (
+            0
+            if current_transaction_count < state.cursor_transaction_count
+            else state.cursor_transaction_count
+        )
+        unseen_entries = non_control_entries[start_cursor:]
+        selected_entries = []
+        consumed_count = 0
+        for entry in unseen_entries:
+            consumed_count += 1
+            if _entry_matches(
                 entry,
                 host_contains=host_contains,
                 path_contains=path_contains,
                 method_in=method_in,
                 status_in=status_in,
-            )
-        ]
-        new_transaction_count = max(current_transaction_count - state.cursor_transaction_count, 0)
+            ):
+                selected_entries.append(entry)
+                if len(selected_entries) == limit:
+                    break
+        new_transaction_count = len(unseen_entries)
         if advance:
-            state.cursor_transaction_count = current_transaction_count
+            state.cursor_transaction_count = start_cursor + consumed_count
 
         return {
             "live_session_id": live_session_id,
@@ -144,9 +156,9 @@ class LiveAnalysisService:
             "cursor_transaction_count": state.cursor_transaction_count,
             "items": [
                 self.query_service.entry_summary(entry)
-                for entry in filtered_entries[:limit]
+                for entry in selected_entries
             ],
-            "returned": min(len(filtered_entries), limit),
+            "returned": len(selected_entries),
         }
 
     async def stop(self, *, live_session_id: str, restore_recording: bool = True) -> dict:

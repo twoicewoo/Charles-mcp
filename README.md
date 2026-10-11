@@ -1,8 +1,6 @@
 # Charles MCP Server
 
-[![PyPI version](https://img.shields.io/pypi/v/charles-mcp.svg)](https://pypi.org/project/charles-mcp/)
-[![License](https://img.shields.io/pypi/l/charles-mcp.svg)](LICENSE)
-[![Python](https://img.shields.io/pypi/pyversions/charles-mcp.svg)](https://pypi.org/project/charles-mcp/)
+此 fork 仅面向最新版 MCP Python SDK（`mcp>=2.3.0`），需从 GitHub 安装；PyPI 上的同名包是上游版本。
 
 [Docs](docs/README.md) | [Tool Contract](docs/contracts/tools.md) | [AGENTS](AGENTS.md) | [Agent Workflow Guide](docs/agent-workflows.md) | [English README](README.en.md)
 
@@ -46,7 +44,7 @@ Charles MCP Server 用于把 Charles Proxy 接入 MCP 客户端，让 agent 可�
 
 ### 2. 安装并配置到 MCP 客户端
 
-无需 clone 仓库，无需手动创建虚拟环境。需要先安装 [uv](https://docs.astral.sh/uv/getting-started/installation/)。
+无需 clone 仓库或手动创建虚拟环境。需要先安装 [uv](https://docs.astral.sh/uv/getting-started/installation/)。以下示例从 GitHub 安装此 fork。
 
 #### Claude Code CLI
 
@@ -54,7 +52,7 @@ Charles MCP Server 用于把 Charles Proxy 接入 MCP 客户端，让 agent 可�
 claude mcp add-json charles '{
   "type": "stdio",
   "command": "uvx",
-  "args": ["charles-mcp"],
+  "args": ["--from", "git+https://github.com/twoicewoo/Charles-mcp.git", "charles-mcp"],
   "env": {
     "CHARLES_USER": "admin",
     "CHARLES_PASS": "123456",
@@ -70,7 +68,7 @@ claude mcp add-json charles '{
   "mcpServers": {
     "charles": {
       "command": "uvx",
-      "args": ["charles-mcp"],
+      "args": ["--from", "git+https://github.com/twoicewoo/Charles-mcp.git", "charles-mcp"],
       "env": {
         "CHARLES_USER": "admin",
         "CHARLES_PASS": "123456",
@@ -86,7 +84,7 @@ claude mcp add-json charles '{
 ```toml
 [mcp_servers.charles]
 command = "uvx"
-args = ["charles-mcp"]
+args = ["--from", "git+https://github.com/twoicewoo/Charles-mcp.git", "charles-mcp"]
 
 [mcp_servers.charles.env]
 CHARLES_USER = "admin"
@@ -121,7 +119,7 @@ Step 3 — Detect which MCP client is installed:
 
   a) Claude Code — run: claude --version
      If it succeeds, run this command and skip to Step 5:
-       claude mcp add-json charles '{"type":"stdio","command":"uvx","args":["charles-mcp"],"env":{"CHARLES_USER":"admin","CHARLES_PASS":"123456","CHARLES_MANAGE_LIFECYCLE":"false"}}'
+       claude mcp add-json charles '{"type":"stdio","command":"uvx","args":["--from","git+https://github.com/twoicewoo/Charles-mcp.git","charles-mcp"],"env":{"CHARLES_USER":"admin","CHARLES_PASS":"123456","CHARLES_MANAGE_LIFECYCLE":"false"}}'
 
   b) Claude Desktop — check if config file exists:
      - macOS:   ~/Library/Application Support/Claude/claude_desktop_config.json
@@ -141,7 +139,7 @@ Step 4 — Write config (for clients b/c/d):
   The config entry to add is:
     "charles": {
       "command": "uvx",
-      "args": ["charles-mcp"],
+      "args": ["--from", "git+https://github.com/twoicewoo/Charles-mcp.git", "charles-mcp"],
       "env": {
         "CHARLES_USER": "admin",
         "CHARLES_PASS": "123456",
@@ -156,9 +154,8 @@ Step 4 — Write config (for clients b/c/d):
     { "mcpServers": { "charles": { ... } } }
 
 Step 5 — Verify:
-  Run: uvx charles-mcp
-  Wait 3 seconds then terminate the process.
-  If it starts without import errors, the installation is successful.
+  Run an MCP initialize/list_tools handshake against the configured server.
+  Do not call tools that clear the Charles session or start a recording.
 
 Step 6 — Report:
   Print: "charles-mcp installed successfully. Please restart your MCP client to load the new server."

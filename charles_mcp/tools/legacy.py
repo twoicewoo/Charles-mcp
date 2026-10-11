@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 
 from charles_mcp.tools.tool_contract import (
     HostContains,
@@ -22,7 +22,7 @@ from charles_mcp.utils import validate_regex
 logger = logging.getLogger(__name__)
 
 
-def register_legacy_tools(mcp: FastMCP) -> None:
+def register_legacy_tools(mcp: MCPServer) -> None:
     @mcp.tool()
     async def proxy_by_time(record_seconds: RecordSeconds, ctx: ToolContext) -> list[dict]:
         """Deprecated compatibility alias. Prefer canonical live/history/reverse tools.
@@ -39,7 +39,7 @@ def register_legacy_tools(mcp: FastMCP) -> None:
         if error_payload:
             return error_payload
 
-        return await get_proxy_data(record_seconds, ctx, deps=deps)
+        return await get_proxy_data(record_seconds, deps=deps)
 
     @mcp.tool()
     async def filter_func(
@@ -86,7 +86,7 @@ def register_legacy_tools(mcp: FastMCP) -> None:
                     retry_example='filter_func(capture_seconds=0, keyword_regex="token|session")',
                 )
 
-        raw_data = await get_proxy_data(capture_seconds, ctx, deps=deps)
+        raw_data = await get_proxy_data(capture_seconds, deps=deps)
         if not isinstance(raw_data, list):
             return raw_data
 

@@ -14,7 +14,7 @@ def test_pyproject_metadata_matches_current_project_contract() -> None:
 
     assert project["readme"]["file"] == "README.en.md"
     assert project["readme"]["content-type"] == "text/markdown"
-    assert "mcp>=1.25.0" in project["dependencies"]
+    assert "mcp>=2.3.0" in project["dependencies"]
     assert "pydantic>=2.12.0" in project["dependencies"]
     assert "jmespath>=1.0.1" in project["dependencies"]
     assert project["scripts"]["charles-mcp"] == "charles_mcp.main:main"

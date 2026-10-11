@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import threading
 from collections.abc import Iterator
@@ -52,6 +53,8 @@ class SQLiteStore:
         self._lock = threading.RLock()
         self._transaction_depth = 0
         self._conn = self._create_connection()
+        if os.name != "nt":
+            self.path.chmod(0o600)
         self._initialize()
 
     def _create_connection(self) -> sqlite3.Connection:

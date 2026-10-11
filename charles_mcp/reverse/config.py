@@ -145,6 +145,9 @@ class VNextConfig:
         self.temp_dir = self.state_root / "tmp"
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
         self.temp_dir.mkdir(parents=True, exist_ok=True)
+        if os.name != "nt":
+            for path in (self.state_root, self.artifacts_dir, self.temp_dir):
+                path.chmod(0o700)
 
     @property
     def charles_proxy_url(self) -> str:

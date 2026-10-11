@@ -118,6 +118,63 @@ async def test_live_analysis_service_peek_and_read_only_return_new_entries(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_live_analysis_read_limit_preserves_unreturned_entries(tmp_path: Path):
+    config = VNextConfig(state_root=tmp_path / "state")
+    store = SQLiteStore(config.database_path)
+    control = _FakeControlService(
+        [
+            _build_snapshot("/baseline"),
+            _build_snapshot("/baseline", "/new-1", "/new-2", "/new-3"),
+        ],
+        recording=True,
+    )
+    service = LiveAnalysisService(
+        control_service=control,  # type: ignore[arg-type]
+        ingest_service=IngestService(config, store),
+        query_service=QueryService(store),
+        temp_dir=config.temp_dir,
+    )
+    started = await service.start(start_recording_if_stopped=False)
+
+    results = [
+        await service.read(live_session_id=started["live_session_id"], limit=1)
+        for _ in range(3)
+    ]
+
+    assert [result["items"][0]["path"] for result in results] == [
+        "/new-1", "/new-2", "/new-3"
+    ]
+    assert [result["cursor_transaction_count"] for result in results] == [2, 3, 4]
+
+
+@pytest.mark.asyncio
+async def test_live_analysis_read_recovers_after_external_session_clear(tmp_path: Path):
+    config = VNextConfig(state_root=tmp_path / "state")
+    store = SQLiteStore(config.database_path)
+    control = _FakeControlService(
+        [
+            _build_snapshot("/old-1", "/old-2", "/old-3"),
+            _build_snapshot("/old-1", "/old-2", "/old-3", "/new-before-reset"),
+            _build_snapshot("/after-reset"),
+        ],
+        recording=True,
+    )
+    service = LiveAnalysisService(
+        control_service=control,  # type: ignore[arg-type]
+        ingest_service=IngestService(config, store),
+        query_service=QueryService(store),
+        temp_dir=config.temp_dir,
+    )
+    started = await service.start(start_recording_if_stopped=False)
+    first = await service.read(live_session_id=started["live_session_id"])
+    after_reset = await service.read(live_session_id=started["live_session_id"])
+
+    assert [item["path"] for item in first["items"]] == ["/new-before-reset"]
+    assert [item["path"] for item in after_reset["items"]] == ["/after-reset"]
+    assert after_reset["cursor_transaction_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_live_analysis_service_excludes_control_charles_from_cursor_counts(tmp_path: Path):
     config = VNextConfig(state_root=tmp_path / "state")
     store = SQLiteStore(config.database_path)

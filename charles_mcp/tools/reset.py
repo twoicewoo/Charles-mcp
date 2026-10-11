@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 
 from charles_mcp.client import CharlesClientError
 from charles_mcp.schemas.status import (
@@ -16,13 +16,12 @@ from charles_mcp.tools.tool_contract import (
     ThrottlingPreset,
     ToolContext,
     get_tool_dependencies,
-    safe_ctx_log,
 )
 
 logger = logging.getLogger(__name__)
 
 
-def register_reset_tools(mcp: FastMCP) -> None:
+def register_reset_tools(mcp: MCPServer) -> None:
     @mcp.tool()
     async def throttling(ctx: ToolContext, preset: ThrottlingPreset) -> str:
         """Set a network throttling preset in Charles."""
@@ -59,7 +58,7 @@ def register_reset_tools(mcp: FastMCP) -> None:
     async def reset_environment(ctx: ToolContext) -> str:
         """Reset the Charles environment and restore the saved configuration."""
         deps = get_tool_dependencies(ctx)
-        await safe_ctx_log(ctx, "info", "Running manual environment reset...")
+        logger.info("Running manual environment reset...")
         try:
             await deps.restore_config_fn(deps.config)
             return "Environment reset completed"

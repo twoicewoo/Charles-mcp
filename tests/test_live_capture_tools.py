@@ -1,3 +1,4 @@
+import json
 from copy import deepcopy
 
 import pytest
@@ -7,7 +8,9 @@ from charles_mcp.server import create_server
 
 
 def _tool_result(call_result):
-    payload = call_result[1]
+    payload = call_result.structured_content
+    if payload is None:
+        payload = json.loads(call_result.content[0].text)
     return payload["result"] if isinstance(payload, dict) and "result" in payload else payload
 
 
@@ -147,7 +150,6 @@ async def test_start_live_capture_default_adopts_and_never_clears(
     # start_recording is idempotent and must be called so adopted sessions
     # whose recording was paused start capturing again.
     assert "start" in fake_client.calls
-
 
 @pytest.mark.asyncio
 async def test_start_live_capture_with_explicit_reset_session_still_clears(

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 
 from charles_mcp.schemas.analysis import (
     CaptureAnalysisGroupsResult,
@@ -30,7 +30,7 @@ from charles_mcp.tools.tool_contract import (
 )
 
 
-def register_history_tools(mcp: FastMCP) -> None:
+def register_history_tools(mcp: MCPServer) -> None:
     @mcp.tool()
     async def analyze_recorded_traffic(
         ctx: ToolContext,

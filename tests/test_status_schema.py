@@ -9,7 +9,7 @@ def test_charles_status_tool_has_structured_output_schema() -> None:
         tools = await server.list_tools()
         for tool in tools:
             if tool.name == "charles_status":
-                return tool.outputSchema
+                return tool.output_schema
         return None
 
     schema = asyncio.run(_get_schema())

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Annotated, Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 from pydantic import Field
 
 from charles_mcp.config import Config
@@ -138,8 +138,8 @@ def build_reverse_runtime(config: Config | None = None) -> ReverseRuntime:
     )
 
 
-def register_reverse_tools(mcp: FastMCP, runtime: ReverseRuntime) -> None:
-    """Register reverse-analysis tools on an existing FastMCP server."""
+def register_reverse_tools(mcp: MCPServer, runtime: ReverseRuntime) -> None:
+    """Register reverse-analysis tools on an existing MCPServer."""
     config = runtime.config
     ingest_service = runtime.ingest_service
     query_service = runtime.query_service
@@ -432,9 +432,9 @@ def register_reverse_tools(mcp: FastMCP, runtime: ReverseRuntime) -> None:
         return _with_live_snapshot_resolution(result, resolution)
 
 
-def create_server(config: Config | None = None) -> FastMCP:
-    """Create a FastMCP server exposing only the reverse-analysis tools."""
+def create_server(config: Config | None = None) -> MCPServer:
+    """Create an MCPServer exposing only the reverse-analysis tools."""
     runtime = build_reverse_runtime(config)
-    mcp = FastMCP("CharlesMCPReverse", json_response=True)
+    mcp = MCPServer("CharlesMCPReverse")
     register_reverse_tools(mcp, runtime)
     return mcp

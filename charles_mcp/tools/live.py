@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 
 from charles_mcp.schemas.analysis import TrafficQueryResult
 from charles_mcp.schemas.live_capture import (
@@ -56,7 +56,7 @@ def _compact_read_result(result: LiveCaptureReadResult) -> LiveCaptureReadResult
     return result.model_copy(update={"items": compacted})
 
 
-def register_live_tools(mcp: FastMCP) -> None:
+def register_live_tools(mcp: MCPServer) -> None:
     @mcp.tool()
     async def start_live_capture(
         ctx: ToolContext,

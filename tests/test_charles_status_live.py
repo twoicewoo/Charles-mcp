@@ -8,12 +8,10 @@ from charles_mcp.server import create_server
 
 
 def _tool_result(call_result):
-    if isinstance(call_result, tuple):
-        payload = call_result[1]
-        return payload["result"] if isinstance(payload, dict) and "result" in payload else payload
-    if isinstance(call_result, list) and call_result:
-        return json.loads(call_result[0].text)
-    return call_result
+    payload = call_result.structured_content
+    if payload is None:
+        payload = json.loads(call_result.content[0].text)
+    return payload["result"] if isinstance(payload, dict) and "result" in payload else payload
 
 
 def _fake_client_class() -> type:

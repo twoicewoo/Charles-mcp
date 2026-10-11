@@ -6,7 +6,7 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 
 from charles_mcp.client import CharlesClient
 from charles_mcp.config import Config, get_config
@@ -59,7 +59,7 @@ def _resolve_expose_legacy_tools(
 def create_server(
     config: Config | None = None,
     expose_legacy_tools: bool | None = None,
-) -> FastMCP[ToolDependencies]:
+) -> MCPServer[ToolDependencies]:
     """
     Create and configure the Charles MCP server.
 
@@ -69,7 +69,7 @@ def create_server(
             falls back to Config.expose_legacy_tools / CHARLES_EXPOSE_LEGACY_TOOLS.
 
     Returns:
-        Configured FastMCP server instance.
+        Configured MCPServer instance.
     """
     config = config or get_config()
     compat_legacy = _resolve_expose_legacy_tools(config, expose_legacy_tools)
@@ -99,7 +99,7 @@ def create_server(
     )
 
     @asynccontextmanager
-    async def lifespan(server: FastMCP[ToolDependencies]) -> AsyncIterator[ToolDependencies]:
+    async def lifespan(server: MCPServer[ToolDependencies]) -> AsyncIterator[ToolDependencies]:
         logger.info("MCP service lifespan started")
 
         if config.manage_charles_lifecycle:
@@ -113,7 +113,7 @@ def create_server(
             reverse_runtime.store.close()
             logger.info("MCP service lifespan finished")
 
-    mcp = FastMCP("CharlesMCP", json_response=True, lifespan=lifespan)
+    mcp = MCPServer("CharlesMCP", lifespan=lifespan)
     attach_tool_dependencies(mcp, deps)
 
     register_live_tools(mcp)
