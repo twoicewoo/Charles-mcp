@@ -110,6 +110,11 @@ class Config:
     request_timeout: int = field(
         default_factory=lambda: int(os.getenv("CHARLES_REQUEST_TIMEOUT", "10"))
     )
+    session_export_max_bytes: int = field(
+        default_factory=lambda: int(
+            os.getenv("CHARLES_SESSION_EXPORT_MAX_BYTES", str(32 * 1024 * 1024))
+        )
+    )
     max_stoptime: int = field(
         default_factory=lambda: int(os.getenv("CHARLES_MAX_STOPTIME", "3600"))
     )
@@ -292,6 +297,12 @@ class Config:
             )
             self.request_timeout = 10
 
+        if self.session_export_max_bytes <= 0:
+            warnings.append(
+                "Invalid session export size limit; falling back to 32 MiB."
+            )
+            self.session_export_max_bytes = 32 * 1024 * 1024
+
         if self.max_stoptime <= 0 or self.max_stoptime > 7200:
             warnings.append(
                 f"Invalid max stop time ({self.max_stoptime}); falling back to 3600 seconds."
@@ -320,6 +331,7 @@ class Config:
             "package_dir": self.package_dir,
             "backup_dir": self.backup_dir,
             "request_timeout": self.request_timeout,
+            "session_export_max_bytes": self.session_export_max_bytes,
             "max_stoptime": self.max_stoptime,
             "manage_charles_lifecycle": self.manage_charles_lifecycle,
             "expose_legacy_tools": self.expose_legacy_tools,

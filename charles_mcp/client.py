@@ -36,6 +36,12 @@ class CharlesAPIError(CharlesClientError):
     pass
 
 
+class CharlesSessionTooLargeError(CharlesClientError):
+    """The current Charles session cannot safely be exported in one response."""
+
+    pass
+
+
 class CharlesClient:
     """
     Charles Proxy 异步 API 客户端。
@@ -191,7 +197,7 @@ class CharlesClient:
             logger.error(f"清理会话失败: {e}")
             return False
 
-    async def export_session_json(self) -> list[dict]:
+    async def export_session_json(self, *, max_bytes: int | None = None) -> list[dict]:
         """
         导出当前会话为 JSON 格式。
 
@@ -201,13 +207,67 @@ class CharlesClient:
         Raises:
             CharlesAPIError: 导出失败时抛出
         """
+        if self._client is None:
+            await self.connect()
+        client = self._client
+        if client is None:
+            raise CharlesConnectionError("Charles client is not connected")
+
+        limit = max_bytes if max_bytes is not None else self.config.session_export_max_bytes
+        if limit <= 0:
+            raise ValueError("max_bytes must be positive")
+
         try:
-            response = await self._get("/session/export-json")
-            data = cast(list[dict], response.json())
-            logger.info(f"导出会话成功，共 {len(data)} 条记录")
-            return data
-        except json.JSONDecodeError as e:
+            async with client.stream("GET", "/session/export-json") as response:
+                response.raise_for_status()
+                content_length = response.headers.get("content-length")
+                try:
+                    declared_size = int(content_length) if content_length else None
+                except ValueError:
+                    declared_size = None
+                if declared_size is not None and declared_size > limit:
+                    raise CharlesSessionTooLargeError(
+                        self._session_export_limit_message(limit, declared_size)
+                    )
+
+                chunks: list[bytes] = []
+                received = 0
+                async for chunk in response.aiter_bytes():
+                    received += len(chunk)
+                    if received > limit:
+                        raise CharlesSessionTooLargeError(
+                            self._session_export_limit_message(limit, received)
+                        )
+                    chunks.append(chunk)
+        except CharlesSessionTooLargeError:
+            raise
+        except httpx.TimeoutException as e:
+            raise CharlesConnectionError(f"请求超时: {e}") from e
+        except httpx.HTTPStatusError as e:
+            raise CharlesAPIError(
+                f"API 调用失败 [{e.response.status_code}]: /session/export-json"
+            ) from e
+        except httpx.RequestError as e:
+            raise CharlesClientError(f"请求错误: {e}") from e
+
+        try:
+            data = cast(list[dict], json.loads(b"".join(chunks)))
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
             raise CharlesAPIError(f"解析 JSON 响应失败: {e}") from e
+        if not isinstance(data, list):
+            raise CharlesAPIError("Charles session export is not a JSON array")
+        logger.info("导出会话成功，共 %d 条记录", len(data))
+        return data
+
+    @staticmethod
+    def _session_export_limit_message(limit: int, received: int) -> str:
+        return (
+            "Charles session export exceeds the configured "
+            f"{limit} byte limit (at least {received} bytes received). "
+            "The existing session was preserved. Start a new capture with "
+            "reset_session=true, or increase CHARLES_SESSION_EXPORT_MAX_BYTES "
+            "only when enough memory and time are available."
+        )
 
     async def export_session_text(self) -> str:
         """

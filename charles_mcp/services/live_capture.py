@@ -7,7 +7,11 @@ import json
 import logging
 import os
 
-from charles_mcp.client import CharlesClient, CharlesClientError
+from charles_mcp.client import (
+    CharlesClient,
+    CharlesClientError,
+    CharlesSessionTooLargeError,
+)
 from charles_mcp.config import Config
 from charles_mcp.live_state import LiveCaptureManager
 from charles_mcp.schemas.live_capture import (
@@ -122,14 +126,21 @@ class LiveCaptureService:
         persist: bool = True,
     ) -> StopLiveCaptureResult:
         capture = self.live_manager.require(capture_id)
-        raw_items = await self.export_current_session()
-        self.live_manager.read(
-            capture_id,
-            raw_items,
-            cursor=capture.cursor,
-            limit=max(len(raw_items), 1),
-            advance=True,
-        )
+        snapshot_error: CharlesClientError | None = None
+        try:
+            raw_items = await self.export_current_session()
+            self.live_manager.read(
+                capture_id,
+                raw_items,
+                cursor=capture.cursor,
+                limit=max(len(raw_items), 1),
+                advance=True,
+            )
+        except CharlesClientError as error:
+            # Stopping recording must not depend on exporting a potentially
+            # huge or corrupt session. The caller can start a clean capture.
+            snapshot_error = error
+            capture.warnings.append(f"final_snapshot_unavailable: {error}")
 
         if capture.managed:
             stop_succeeded, stop_warnings, stop_error = await self._stop_recording_with_retry()
@@ -147,7 +158,7 @@ class LiveCaptureService:
                 )
 
         persisted_path: str | None = None
-        if persist:
+        if persist and snapshot_error is None:
             client = await self._get_shared_client()
             persisted_path = self.save_capture_items(
                 client.get_full_save_path(),
@@ -163,7 +174,7 @@ class LiveCaptureService:
             total_items=len(stopped.items),
             recoverable=False,
             active_capture_preserved=False,
-            error=None,
+            error=str(snapshot_error) if snapshot_error else None,
             warnings=stopped.warnings,
         )
 
@@ -171,6 +182,8 @@ class LiveCaptureService:
         try:
             client = await self._get_shared_client()
             return await client.export_session_json()
+        except CharlesSessionTooLargeError:
+            raise
         except CharlesClientError:
             # Shared client may have gone stale; reset and retry once
             await self._close_shared_client()

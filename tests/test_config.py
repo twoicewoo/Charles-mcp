@@ -26,6 +26,7 @@ class TestConfig:
         assert config.proxy_port == 8888
         assert config.charles_base_url == "http://control.charles"
         assert config.request_timeout == 10
+        assert config.session_export_max_bytes == 32 * 1024 * 1024
         assert config.max_stoptime == 3600
         assert config.expose_legacy_tools is False
 
@@ -101,6 +102,14 @@ class TestConfig:
         warnings = config.validate()
         assert warnings
         assert config.request_timeout == 10
+
+    def test_validate_invalid_session_export_limit(self) -> None:
+        config = Config()
+        config.session_export_max_bytes = 0
+        config.config_path = "/some/path"
+        warnings = config.validate()
+        assert warnings
+        assert config.session_export_max_bytes == 32 * 1024 * 1024
 
     def test_validate_invalid_max_stoptime(self) -> None:
         config = Config()

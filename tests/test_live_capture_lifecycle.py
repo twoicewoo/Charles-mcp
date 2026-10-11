@@ -4,6 +4,7 @@ from copy import deepcopy
 import pytest
 
 import charles_mcp.server as server_module
+from charles_mcp.client import CharlesSessionTooLargeError
 from charles_mcp.server import create_server
 
 
@@ -200,3 +201,32 @@ async def test_stop_live_capture_failure_preserves_active_capture(
     assert "stop_recording_failed_after_retry" in result["warnings"]
     assert status["live_capture"]["active_capture"]["capture_id"] == started["capture_id"]
     assert fake_client.calls == ["clear", "start", "export", "stop", "stop", "info"]
+
+
+@pytest.mark.asyncio
+async def test_stop_live_capture_stops_when_final_export_is_too_large(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_client = _fake_client_class()
+
+    async def too_large_export(self):
+        type(self).calls.append("export")
+        raise CharlesSessionTooLargeError("session is too large")
+
+    fake_client.export_session_json = too_large_export
+    monkeypatch.setattr(server_module, "CharlesClient", fake_client)
+
+    server = create_server()
+    started = _tool_result(await server.call_tool("start_live_capture", {"reset_session": True}))
+    result = _tool_result(
+        await server.call_tool(
+            "stop_live_capture",
+            {"capture_id": started["capture_id"], "persist": True},
+        )
+    )
+
+    assert result["status"] == "stopped"
+    assert result["persisted_path"] is None
+    assert result["error"] == "session is too large"
+    assert result["active_capture_preserved"] is False
+    assert fake_client.calls == ["clear", "start", "export", "stop"]

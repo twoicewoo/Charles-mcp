@@ -183,6 +183,7 @@ Step 6 — Report:
 | `CHARLES_PROXY_PORT` | `8888` | Charles proxy port |
 | `CHARLES_CONFIG_PATH` | auto-detect | Charles config file path |
 | `CHARLES_REQUEST_TIMEOUT` | `10` | Control-plane HTTP timeout in seconds |
+| `CHARLES_SESSION_EXPORT_MAX_BYTES` | `33554432` | Maximum bytes accepted from one session JSON export; oversized sessions fail fast without being cleared |
 | `CHARLES_MAX_STOPTIME` | `3600` | Maximum bounded recording length |
 | `CHARLES_MANAGE_LIFECYCLE` | `false` | Whether the MCP server should manage Charles startup and shutdown |
 | `CHARLES_REVERSE_STATE_DIR` | `${CHARLES_STATE_DIR}/reverse` | State root for reverse-analysis artifacts and SQLite data |

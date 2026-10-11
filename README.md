@@ -183,6 +183,7 @@ Step 6 — Report:
 | `CHARLES_PROXY_PORT` | `8888` | Charles 代理端口 |
 | `CHARLES_CONFIG_PATH` | 自动探测 | Charles 配置文件路径 |
 | `CHARLES_REQUEST_TIMEOUT` | `10` | 控制面 HTTP 超时秒数 |
+| `CHARLES_SESSION_EXPORT_MAX_BYTES` | `33554432` | 单次会话 JSON 导出的最大读取字节数；超出后快速报错且不清空原会话 |
 | `CHARLES_MAX_STOPTIME` | `3600` | 有界录制最大时长 |
 | `CHARLES_MANAGE_LIFECYCLE` | `false` | 是否由 MCP server 管理 Charles 启停 |
 | `CHARLES_REVERSE_STATE_DIR` | `${CHARLES_STATE_DIR}/reverse` | reverse-analysis 的 SQLite 与工件状态目录 |
