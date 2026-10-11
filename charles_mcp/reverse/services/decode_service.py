@@ -30,6 +30,7 @@ class DecodeService:
         side: str,
         descriptor_path: str | None = None,
         message_type: str | None = None,
+        include_sensitive: bool = False,
     ) -> dict:
         snapshot = self.store.get_entry_snapshot(entry_id)
         if snapshot is None:
@@ -140,7 +141,11 @@ class DecodeService:
             },
         )
         self.store.upsert_decoded_artifact(artifact)
-        return artifact.model_dump(mode="json", exclude_none=True)
+        result = artifact.model_dump(mode="json", exclude_none=True)
+        if not include_sensitive:
+            result["preview_text"] = "[REDACTED]" if result.get("preview_text") else None
+            result["structured_json"] = None
+        return result
 
 
 def _looks_like_json_bytes(payload: bytes) -> bool:

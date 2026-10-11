@@ -69,7 +69,7 @@ def test_decode_service_handles_compressed_text_formats(tmp_path, encoding, payl
         source_kind=CaptureSourceKind.HISTORY_IMPORT,
     )
     entry = store.list_entries(capture_id=imported["capture_id"], limit=1)[0]
-    artifact = decode_service.decode_entry_body(entry_id=entry.entry_id, side="response")
+    artifact = decode_service.decode_entry_body(entry_id=entry.entry_id, side="response", include_sensitive=True)
 
     assert artifact["artifact_type"] == "plain_text"
     assert artifact["preview_text"].startswith("hello ")
@@ -99,7 +99,7 @@ def test_decode_service_tolerates_already_decoded_payload_with_encoding_header(t
         source_kind=CaptureSourceKind.HISTORY_IMPORT,
     )
     entry = store.list_entries(capture_id=imported["capture_id"], limit=1)[0]
-    artifact = decode_service.decode_entry_body(entry_id=entry.entry_id, side="response")
+    artifact = decode_service.decode_entry_body(entry_id=entry.entry_id, side="response", include_sensitive=True)
 
     assert artifact["artifact_type"] == "plain_text"
     assert artifact["preview_text"] == f"already decoded {encoding}"
@@ -155,6 +155,7 @@ def test_decode_service_handles_protobuf_with_descriptor(tmp_path):
         side="response",
         descriptor_path=str(descriptor_path),
         message_type="reverse.LoginReply",
+        include_sensitive=True,
     )
 
     assert artifact["artifact_type"] == "protobuf"
@@ -183,7 +184,7 @@ def test_decode_service_downgrades_invalid_json_payload_to_plain_text(tmp_path):
         source_kind=CaptureSourceKind.HISTORY_IMPORT,
     )
     entry = store.list_entries(capture_id=imported["capture_id"], limit=1)[0]
-    artifact = decode_service.decode_entry_body(entry_id=entry.entry_id, side="response")
+    artifact = decode_service.decode_entry_body(entry_id=entry.entry_id, side="response", include_sensitive=True)
 
     assert artifact["artifact_type"] == "plain_text"
     assert artifact["preview_text"] == '{"broken": '

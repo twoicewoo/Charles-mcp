@@ -155,6 +155,7 @@ def test_traffic_normalizer_returns_full_sensitive_headers_and_body() -> None:
         capture_source="history",
         recording_path="package/example.chlsj",
         include_full_body=False,
+        include_sensitive=True,
         max_preview_chars=80,
         max_headers_per_side=8,
     )
@@ -165,6 +166,17 @@ def test_traffic_normalizer_returns_full_sensitive_headers_and_body() -> None:
     assert "top-secret" in (entry.response.body.preview_text or "")
     assert entry.request.body.kind == "json"
     assert entry.response.body.kind == "json"
+
+
+def test_traffic_normalizer_redacts_captured_values_by_default() -> None:
+    entry = TrafficNormalizer(Config()).normalize_entry(
+        _api_entry(), capture_source="history", recording_path="package/example.chlsj"
+    )
+    dumped = entry.model_dump_json()
+    assert "secret-token" not in dumped
+    assert "secret-password" not in dumped
+    assert "super-secret" not in dumped
+    assert entry.request.headers[0].value == "[REDACTED]"
 
 
 def test_traffic_normalizer_produces_consistent_output() -> None:
@@ -198,6 +210,7 @@ def test_traffic_normalizer_summarizes_multipart_parts() -> None:
         capture_source="history",
         recording_path="package/upload.chlsj",
         include_full_body=True,
+        include_sensitive=True,
         max_preview_chars=120,
         max_headers_per_side=8,
     )
@@ -224,6 +237,7 @@ def test_traffic_normalizer_decodes_encoded_multipart_parts() -> None:
         capture_source="history",
         recording_path="package/upload-encoded.chlsj",
         include_full_body=False,
+        include_sensitive=True,
         max_preview_chars=120,
         max_headers_per_side=8,
     )
@@ -242,6 +256,7 @@ def test_traffic_normalizer_uses_header_boundary_when_mimetype_is_generic() -> N
         capture_source="history",
         recording_path="package/upload-header-boundary.chlsj",
         include_full_body=False,
+        include_sensitive=True,
         max_preview_chars=120,
         max_headers_per_side=8,
     )

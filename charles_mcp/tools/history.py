@@ -103,6 +103,7 @@ def register_history_tools(mcp: MCPServer) -> None:
         capture_id: str | None = None,
         recording_path: str | None = None,
         include_full_body: bool = False,
+        include_sensitive: bool = False,
         max_body_chars: int = 2048,
     ) -> TrafficDetailResult:
         """Load one traffic entry detail view for drill-down inspection.
@@ -110,7 +111,7 @@ def register_history_tools(mcp: MCPServer) -> None:
         Use detail for one confirmed target, not bulk browsing.
         For history entries, pass recording_path from the summary.
         For live entries, pass capture_id from the summary.
-        Keep include_full_body=false unless you specifically need the raw body text."""
+        Set include_sensitive=true only when you explicitly need captured values; include_full_body controls body length."""
         deps = get_tool_dependencies(ctx)
         return await deps.traffic_query_service.get_detail(
             source=source,
@@ -118,6 +119,7 @@ def register_history_tools(mcp: MCPServer) -> None:
             capture_id=capture_id,
             recording_path=recording_path,
             include_full_body=include_full_body,
+            include_sensitive=include_sensitive,
             max_body_chars=max_body_chars,
         )
 

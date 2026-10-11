@@ -55,6 +55,7 @@ Do not treat this server as a raw packet dump interface.
    - `reverse_get_entry_detail`
 3. Do not default to full body expansion:
    - keep `include_full_body=false` unless explicitly needed
+   - captured values are masked by default; set `include_sensitive=true` only for a single, deliberately authorized detail/decode call
 
 ---
 
@@ -70,6 +71,7 @@ Do not treat this server as a raw packet dump interface.
 
 1. For reverse imported analysis:
    - narrow with `reverse_query_entries` before detail/decode/replay.
+   - `reverse_replay_entry` is preview-only by default. Send a real request only after explicit user authorization, with `execute=true` and the exact destination hostname in `allowed_hosts`; redirects remain disabled.
 2. For reverse live analysis:
    - preserve `live_session_id`
    - prefer task-oriented tools when goal is known:

@@ -140,6 +140,15 @@ class Config:
             legacy_name="CHARLES_VNEXT_LIVE_SNAPSHOT_HISTORY_LIMIT",
         )
     )
+    reverse_live_snapshot_max_bytes: int = field(
+        default_factory=lambda: _env_int("CHARLES_REVERSE_LIVE_SNAPSHOT_MAX_BYTES", 64 * 1024 * 1024)
+    )
+    reverse_live_storage_max_bytes: int = field(
+        default_factory=lambda: _env_int("CHARLES_REVERSE_LIVE_STORAGE_MAX_BYTES", 256 * 1024 * 1024)
+    )
+    reverse_live_storage_max_age_seconds: int = field(
+        default_factory=lambda: _env_int("CHARLES_REVERSE_LIVE_STORAGE_MAX_AGE_SECONDS", 86400)
+    )
     reverse_max_query_limit: int = field(
         default_factory=lambda: _env_int(
             "CHARLES_REVERSE_MAX_QUERY_LIMIT",

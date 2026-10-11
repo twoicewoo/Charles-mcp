@@ -84,6 +84,7 @@ class TrafficQueryService:
         capture_id: str | None = None,
         recording_path: str | None = None,
         include_full_body: bool = False,
+        include_sensitive: bool = False,
         max_body_chars: int = 4096,
     ) -> TrafficDetailResult:
         return await self.orchestrator.get_detail(
@@ -92,6 +93,7 @@ class TrafficQueryService:
             capture_id=capture_id,
             recording_path=recording_path,
             include_full_body=include_full_body,
+            include_sensitive=include_sensitive,
             max_body_chars=max_body_chars,
         )
 

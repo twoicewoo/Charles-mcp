@@ -1,0 +1,14 @@
+# Follow-up: six open audit findings
+
+This follows `2026-10-11-mcp2-audit.md`. The six findings under **Open findings** are addressed in code; the earlier report remains a historical snapshot.
+
+| Finding | Change | Regression evidence |
+| --- | --- | --- |
+| Live snapshots accumulate on disk | Raw XML/native exports are removed after import, including failures. Temporary native conversion is removed. SQLite live captures, entries, dependent runs/findings, and orphaned body blobs are pruned transactionally. Defaults: 20 captures, 256 MiB stored body bytes, 24-hour age, 64 MiB maximum export. Explicit history imports are never pruned. | Retention, orphan cleanup, oversize rejection, and history-preservation tests in `test_live_analysis_service.py`. |
+| Replay sends immediately | Default result is a redacted preview with no HTTP client or persisted experiment. Execution requires `execute=true` plus exact target hostname in `allowed_hosts`; redirects are rejected. Stored and returned request metadata is redacted. | Preview/no-network/no-persistence, allowlist, redirect, and explicit execution tests in `test_replay_service.py`. |
+| Timed legacy recording clears the session | `record_session()` defaults to preserving the existing session, returns only appended entries, and stops recording only if it started it. Clearing requires explicit `reset_session=true`. | `test_client_recording.py`. |
+| Expired reverse session leaves recording on | An idle timer restores recording at TTL even without a later tool call. Expiration also restores on subsequent calls; ownership transfers between overlapping sessions. Server lifespan closes active sessions. Cancellation during initial baseline export restores managed recording. | Idle expiration, ownership transfer, close, and cancellation tests in `test_live_analysis_service.py`. |
+| Quit reports unreachable Charles as success | Only an HTTP success response returns true; connect, timeout, and HTTP failures return false. | Connect-failure test in `test_client_recording.py`. |
+| Detailed output exposes captured secrets | Reverse details, body decoding, findings, replay, normalizer, and summary/detail tools mask captured values by default. A single detail/decode call can explicitly opt into `include_sensitive=true`. | Redacted-default and explicit-full tests in traffic and reverse suites. |
+
+Verification boundary: unit/integration tests and local MCP protocol checks use fake or local HTTP endpoints. No real Charles capture was cleared, replayed, or interrupted for this follow-up. The live implementation still exports/imports the full Charles session per poll; this is a performance limitation, not an unbounded-retention issue. If Charles is unreachable during shutdown, recording restoration cannot be guaranteed and the failure is surfaced rather than reported as success.

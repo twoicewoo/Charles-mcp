@@ -13,6 +13,7 @@ from charles_mcp.schemas.traffic import (
     ResourceClassification,
     TrafficEntry,
 )
+from charles_mcp.services.traffic_redaction import redact_entry
 
 
 class TrafficNormalizer:
@@ -29,6 +30,7 @@ class TrafficNormalizer:
         capture_id: str | None = None,
         recording_path: str | None = None,
         include_full_body: bool = False,
+        include_sensitive: bool = False,
         max_preview_chars: int = 256,
         max_headers_per_side: int = 8,
         max_full_body_chars: int = 4096,
@@ -83,7 +85,7 @@ class TrafficNormalizer:
         )
 
         response_status = response.get("status")
-        return TrafficEntry(
+        entry = TrafficEntry(
             entry_id=self._build_entry_id(
                 raw_entry,
                 capture_source=capture_source,
@@ -111,6 +113,7 @@ class TrafficNormalizer:
             request=request_message,
             response=response_message,
         )
+        return entry if include_sensitive else redact_entry(entry)
 
     def _build_entry_id(
         self,

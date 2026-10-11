@@ -85,7 +85,8 @@ def test_xml_ingest_query_decode_and_signature_candidates(tmp_path):
     assert imported["entry_count"] == 2
     assert len(captures) == 1
     assert queried["returned"] == 2
-    assert detail["request"]["cookies"]["session"] == "abc"
+    assert detail["request"]["cookies"] == "[REDACTED]"
+    assert query_service.get_entry_detail(entry_id=entry_id, include_sensitive=True)["request"]["cookies"]["session"] == "abc"
     assert decoded["artifact_type"] == "json"
     assert candidate_scan["candidates"][0]["field"] == "json.sign"
     assert any(item["finding_type"] == "signature_candidate" for item in findings)

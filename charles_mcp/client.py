@@ -221,6 +221,15 @@ class CharlesClient:
 
     # ==================== 录制控制 ====================
 
+    async def is_recording(self) -> bool:
+        response = await self._get("/")
+        html = response.text
+        if "Status: Recording Stopped" in html:
+            return False
+        if "Status: Recording" in html:
+            return True
+        raise CharlesClientError("could not determine Charles recording status")
+
     async def start_recording(self) -> bool:
         """
         开始录制流量。
@@ -343,15 +352,15 @@ class CharlesClient:
 
         try:
             # 退出命令可能不会返回响应，使用短超时
-            await client.get(
+            response = await client.get(
                 "/quit",
                 timeout=httpx.Timeout(timeout),
             )
+            response.raise_for_status()
             return True
-        except (httpx.TimeoutException, httpx.RequestError) as e:
-            # 退出命令通常会导致连接中断，这是预期行为
-            logger.debug(f"Charles 退出命令已发送 (预期的连接中断): {e}")
-            return True
+        except httpx.HTTPError as e:
+            logger.warning(f"无法确认 Charles 收到退出命令: {e}")
+            return False
         except Exception as e:
             logger.warning(f"发送退出命令时出错: {e}")
             return False
@@ -377,6 +386,7 @@ class CharlesClient:
         duration: int,
         save_path: str | None = None,
         progress_callback: Callable[[int, int], Any] | None = None,
+        reset_session: bool = False,
     ) -> list[dict]:
         """
         录制指定时长的流量会话。
@@ -401,48 +411,52 @@ class CharlesClient:
 
         logger.info(f"开始录制会话，时长: {duration}秒")
         baseline_snapshot = await self.export_session_json()
-
-        # 清理旧数据并开始录制
-        if not await self.clear_session():
+        if reset_session and not await self.clear_session():
             raise CharlesClientError("failed to clear Charles session before recording")
-        if not await self.start_recording():
+        was_recording = await self.is_recording()
+        managed_recording = not was_recording
+        if managed_recording and not await self.start_recording():
             raise CharlesClientError("failed to start Charles recording")
 
         # 等待录制，定期报告进度
         interval = min(10, duration)
         elapsed = 0
 
-        while elapsed < duration:
-            remaining = duration - elapsed
-            wait_time = min(interval, remaining)
+        try:
+            while elapsed < duration:
+                remaining = duration - elapsed
+                wait_time = min(interval, remaining)
+
+                if progress_callback:
+                    try:
+                        result = progress_callback(elapsed, duration)
+                        if asyncio.iscoroutine(result):
+                            await result
+                    except Exception as e:
+                        logger.warning(f"进度回调出错: {e}")
+
+                await asyncio.sleep(wait_time)
+                elapsed += wait_time
 
             if progress_callback:
                 try:
-                    result = progress_callback(elapsed, duration)
+                    result = progress_callback(duration, duration)
                     if asyncio.iscoroutine(result):
                         await result
-                except Exception as e:
-                    logger.warning(f"进度回调出错: {e}")
+                except Exception:
+                    pass
+        finally:
+            if managed_recording and not await self.stop_recording():
+                raise CharlesClientError("failed to stop Charles recording")
 
-            await asyncio.sleep(wait_time)
-            elapsed += wait_time
-
-        # 最终进度
-        if progress_callback:
-            try:
-                result = progress_callback(duration, duration)
-                if asyncio.iscoroutine(result):
-                    await result
-            except Exception:
-                pass
-
-        # 停止录制并导出
-        if not await self.stop_recording():
-            raise CharlesClientError("failed to stop Charles recording")
         data = await self.export_session_json()
         if not data:
             raise CharlesClientError("recording export is empty")
-        if baseline_snapshot and data == baseline_snapshot:
+        if not reset_session and data[: len(baseline_snapshot)] != baseline_snapshot:
+            raise CharlesClientError("Charles session changed during recording; cannot identify new entries")
+        if not reset_session:
+            data = data[len(baseline_snapshot) :]
+        if not data:
             raise CharlesClientError("recording export is unchanged from baseline")
 
         # 保存到文件

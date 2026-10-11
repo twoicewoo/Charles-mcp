@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -30,6 +31,38 @@ class _ReplayHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):  # noqa: A003
         return
+
+
+@pytest.mark.asyncio
+async def test_replay_defaults_to_redacted_preview_without_network_or_persistence(tmp_path, monkeypatch):
+    xml_path = tmp_path / "sample.xml"
+    xml_path.write_text(SAMPLE_XML, encoding="utf-8")
+    config = VNextConfig(state_root=tmp_path / "state")
+    store = SQLiteStore(config.database_path)
+    imported = IngestService(config, store).import_session(
+        path=str(xml_path), source_format=CaptureSourceFormat.XML
+    )
+    entry_id = store.list_entries(capture_id=imported["capture_id"], limit=1)[0].entry_id
+
+    def forbidden_client(**kwargs):
+        raise AssertionError("dry-run must not create an HTTP client")
+
+    monkeypatch.setattr("charles_mcp.reverse.services.replay_service.httpx.AsyncClient", forbidden_client)
+    service = ReplayService(config, store)
+    preview = await service.replay_entry(entry_id=entry_id)
+
+    assert preview["executed"] is False
+    assert "123" not in str(preview)
+    assert "session=abc" not in str(preview)
+    with sqlite3.connect(config.database_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM experiments").fetchone()[0] == 0
+
+    with pytest.raises(ValueError, match="allowed_hosts"):
+        await service.replay_entry(entry_id=entry_id, execute=True, allowed_hosts=["wrong.example"])
+    with pytest.raises(ValueError, match="redirects"):
+        await service.replay_entry(
+            entry_id=entry_id, execute=True, allowed_hosts=["api.example.com"], follow_redirects=True
+        )
 
 
 @pytest.mark.asyncio
@@ -65,6 +98,8 @@ async def test_replay_service_executes_and_persists_run(tmp_path):
         result = await replay_service.replay_entry(
             entry_id=entries[0].entry_id,
             json_overrides={"sign": "valid-signature"},
+            execute=True,
+            allowed_hosts=["127.0.0.1"],
         )
 
         assert result["run"]["execution_status"] == "succeeded"
@@ -108,6 +143,8 @@ async def test_replay_service_ignores_proxy_env(tmp_path, monkeypatch):
         result = await replay_service.replay_entry(
             entry_id=entries[0].entry_id,
             json_overrides={"sign": "valid-signature"},
+            execute=True,
+            allowed_hosts=["127.0.0.1"],
         )
 
         assert result["response"]["status_code"] == 200
@@ -163,6 +200,8 @@ async def test_replay_service_uses_explicit_proxy_when_requested(tmp_path, monke
     result = await replay_service.replay_entry(
         entry_id=entry_id,
         json_overrides={"sign": "valid-signature"},
+        execute=True,
+        allowed_hosts=["api.example.com"],
         use_proxy=True,
     )
 

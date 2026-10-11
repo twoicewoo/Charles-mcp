@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Annotated, Any
 
@@ -118,6 +119,9 @@ def build_reverse_runtime(config: Config | None = None) -> ReverseRuntime:
         temp_dir=reverse_config.temp_dir,
         session_ttl_seconds=reverse_config.live_session_ttl_seconds,
         snapshot_history_limit=reverse_config.live_session_snapshot_history_limit,
+        snapshot_max_bytes=reverse_config.live_snapshot_max_bytes,
+        storage_max_bytes=reverse_config.live_storage_max_bytes,
+        storage_max_age_seconds=reverse_config.live_storage_max_age_seconds,
     )
     workflow_service = WorkflowService(
         live_service=live_service,
@@ -189,10 +193,10 @@ def register_reverse_tools(mcp: MCPServer, runtime: ReverseRuntime) -> None:
         )
 
     @mcp.tool()
-    def reverse_get_entry_detail(entry_id: str) -> dict[str, Any]:
+    def reverse_get_entry_detail(entry_id: str, include_sensitive: bool = False) -> dict[str, Any]:
         """Get the canonical detail view for one imported entry.
-        Use after candidate selection; this is not a bulk-browsing endpoint."""
-        return query_service.get_entry_detail(entry_id=entry_id)
+        Use after candidate selection; this is not a bulk-browsing endpoint. Set include_sensitive=true only for deliberately authorized raw access."""
+        return query_service.get_entry_detail(entry_id=entry_id, include_sensitive=include_sensitive)
 
     @mcp.tool()
     def reverse_decode_entry_body(
@@ -200,6 +204,7 @@ def register_reverse_tools(mcp: MCPServer, runtime: ReverseRuntime) -> None:
         side: str,
         descriptor_path: str | None = None,
         message_type: str | None = None,
+        include_sensitive: bool = False,
     ) -> dict[str, Any]:
         """Decode a stored request/response body, including protobuf when a descriptor is provided."""
         return decode_service.decode_entry_body(
@@ -207,6 +212,7 @@ def register_reverse_tools(mcp: MCPServer, runtime: ReverseRuntime) -> None:
             side=side,
             descriptor_path=descriptor_path,
             message_type=message_type,
+            include_sensitive=include_sensitive,
         )
 
     @mcp.tool()
@@ -217,10 +223,12 @@ def register_reverse_tools(mcp: MCPServer, runtime: ReverseRuntime) -> None:
         json_overrides: dict[str, Any] | None = None,
         form_overrides: dict[str, Any] | None = None,
         body_text_override: str | None = None,
-        follow_redirects: bool = True,
+        execute: bool = False,
+        allowed_hosts: list[str] | None = None,
+        follow_redirects: bool = False,
         use_proxy: bool = False,
     ) -> dict[str, Any]:
-        """Replay one imported entry with optional mutations and store the experiment result."""
+        """Preview a replay by default. Network execution needs execute=true and an exact allowed_hosts match; redirects are never followed."""
         return await replay_service.replay_entry(
             entry_id=entry_id,
             query_overrides=query_overrides,
@@ -228,6 +236,8 @@ def register_reverse_tools(mcp: MCPServer, runtime: ReverseRuntime) -> None:
             json_overrides=json_overrides,
             form_overrides=form_overrides,
             body_text_override=body_text_override,
+            execute=execute,
+            allowed_hosts=allowed_hosts,
             follow_redirects=follow_redirects,
             use_proxy=use_proxy,
         )
@@ -241,9 +251,12 @@ def register_reverse_tools(mcp: MCPServer, runtime: ReverseRuntime) -> None:
     def reverse_list_findings(
         subject_type: str | None = None,
         subject_id: str | None = None,
+        include_sensitive: bool = False,
     ) -> list[dict[str, Any]]:
         """List persisted findings from replay or signature-candidate analysis."""
-        return query_service.list_findings(subject_type=subject_type, subject_id=subject_id)
+        return query_service.list_findings(
+            subject_type=subject_type, subject_id=subject_id, include_sensitive=include_sensitive
+        )
 
     @mcp.tool()
     async def reverse_charles_recording_status(
@@ -339,11 +352,13 @@ def register_reverse_tools(mcp: MCPServer, runtime: ReverseRuntime) -> None:
         descriptor_path: str | None = None,
         message_type: str | None = None,
         run_replay: bool = False,
+        replay_execute: bool = False,
+        replay_allowed_hosts: list[str] | None = None,
         replay_json_overrides: dict[str, Any] | None = None,
         replay_use_proxy: bool = False,
     ) -> dict[str, Any]:
         """Run a task-oriented live login/auth reverse-analysis workflow on new traffic.
-        Read summary/report first and expand evidence only as needed."""
+        Read summary/report first and expand evidence as needed. run_replay previews by default; execution needs replay_execute and replay_allowed_hosts."""
         resolution = _coerce_live_snapshot_format(snapshot_format)
         result = await workflow_service.analyze_live_login_flow(
             live_session_id=live_session_id,
@@ -356,6 +371,8 @@ def register_reverse_tools(mcp: MCPServer, runtime: ReverseRuntime) -> None:
             descriptor_path=descriptor_path,
             message_type=message_type,
             run_replay=run_replay,
+            replay_execute=replay_execute,
+            replay_allowed_hosts=replay_allowed_hosts,
             replay_json_overrides=replay_json_overrides,
             replay_use_proxy=replay_use_proxy,
         )
@@ -373,11 +390,13 @@ def register_reverse_tools(mcp: MCPServer, runtime: ReverseRuntime) -> None:
         descriptor_path: str | None = None,
         message_type: str | None = None,
         run_replay: bool = False,
+        replay_execute: bool = False,
+        replay_allowed_hosts: list[str] | None = None,
         replay_json_overrides: dict[str, Any] | None = None,
         replay_use_proxy: bool = False,
     ) -> dict[str, Any]:
         """Run a task-oriented live API reverse-analysis workflow on new traffic.
-        Read summary/report first and expand evidence only as needed."""
+        Read summary/report first and expand evidence as needed. run_replay previews by default; execution needs replay_execute and replay_allowed_hosts."""
         resolution = _coerce_live_snapshot_format(snapshot_format)
         result = await workflow_service.analyze_live_api_flow(
             live_session_id=live_session_id,
@@ -390,6 +409,8 @@ def register_reverse_tools(mcp: MCPServer, runtime: ReverseRuntime) -> None:
             descriptor_path=descriptor_path,
             message_type=message_type,
             run_replay=run_replay,
+            replay_execute=replay_execute,
+            replay_allowed_hosts=replay_allowed_hosts,
             replay_json_overrides=replay_json_overrides,
             replay_use_proxy=replay_use_proxy,
         )
@@ -408,11 +429,13 @@ def register_reverse_tools(mcp: MCPServer, runtime: ReverseRuntime) -> None:
         descriptor_path: str | None = None,
         message_type: str | None = None,
         run_replay: bool = False,
+        replay_execute: bool = False,
+        replay_allowed_hosts: list[str] | None = None,
         replay_json_overrides: dict[str, Any] | None = None,
         replay_use_proxy: bool = False,
     ) -> dict[str, Any]:
         """Run a task-oriented live signature reverse-analysis workflow on new traffic.
-        Read summary/report first and expand evidence only as needed."""
+        Read summary/report first and expand evidence as needed. run_replay previews by default; execution needs replay_execute and replay_allowed_hosts."""
         resolution = _coerce_live_snapshot_format(snapshot_format)
         result = await workflow_service.analyze_live_signature_flow(
             live_session_id=live_session_id,
@@ -426,6 +449,8 @@ def register_reverse_tools(mcp: MCPServer, runtime: ReverseRuntime) -> None:
             descriptor_path=descriptor_path,
             message_type=message_type,
             run_replay=run_replay,
+            replay_execute=replay_execute,
+            replay_allowed_hosts=replay_allowed_hosts,
             replay_json_overrides=replay_json_overrides,
             replay_use_proxy=replay_use_proxy,
         )
@@ -435,6 +460,17 @@ def register_reverse_tools(mcp: MCPServer, runtime: ReverseRuntime) -> None:
 def create_server(config: Config | None = None) -> MCPServer:
     """Create an MCPServer exposing only the reverse-analysis tools."""
     runtime = build_reverse_runtime(config)
-    mcp = MCPServer("CharlesMCPReverse")
+
+    @asynccontextmanager
+    async def lifespan(server: MCPServer):
+        try:
+            yield None
+        finally:
+            try:
+                await runtime.live_service.close_all()
+            finally:
+                runtime.store.close()
+
+    mcp = MCPServer("CharlesMCPReverse", lifespan=lifespan)
     register_reverse_tools(mcp, runtime)
     return mcp

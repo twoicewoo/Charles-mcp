@@ -121,9 +121,9 @@ legacy compatibility tools 不属于默认公开工具面，仅在显式兼容�
 | `reverse_import_session` | 导入官方 Charles XML / native session，返回 `capture_id` 供后续 reverse 查询与回放使用 |
 | `reverse_list_captures` | 返回 reverse SQLite 中已导入的数据集列表 |
 | `reverse_query_entries` | 只按 route 级字段筛选已导入 reverse entry，不展开 detail |
-| `reverse_get_entry_detail` | 读取单条 reverse entry 的 canonical detail，包含 request / response / body blob / decoded artifact |
-| `reverse_decode_entry_body` | 对单条 reverse entry 的 request / response body 做结构化解码 |
-| `reverse_replay_entry` | 对单条 reverse entry 做 replay，必要时保存 experiment / run / finding |
+| `reverse_get_entry_detail` | 读取单条 reverse entry 的 canonical detail；敏感值默认脱敏，`include_sensitive=true` 才返回原值 |
+| `reverse_decode_entry_body` | 对单条 reverse entry 的 request / response body 做结构化解码；原文需显式 `include_sensitive=true` |
+| `reverse_replay_entry` | 默认仅预览；真实执行需 `execute=true` 和精确 `allowed_hosts`，禁止自动重定向，并保存 experiment / run / finding |
 | `reverse_discover_signature_candidates` | 对多条 reverse entry 做字段对比并输出疑似签名参数排名 |
 | `reverse_list_findings` | 返回 reverse replay / signature 相关 finding |
 | `reverse_start_live_analysis` | 启动 reverse live session，后续 reverse live 工具依赖 `live_session_id` |

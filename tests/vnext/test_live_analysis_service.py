@@ -1,10 +1,12 @@
+import asyncio
+import sqlite3
 from pathlib import Path
 
 import pytest
 from defusedxml.common import DefusedXmlException
 
 from charles_mcp.reverse.config import VNextConfig
-from charles_mcp.reverse.models import CaptureSourceFormat
+from charles_mcp.reverse.models import CaptureSourceFormat, CaptureSourceKind
 from charles_mcp.reverse.services import IngestService, LiveAnalysisService, QueryService
 from charles_mcp.reverse.services.live_analysis_service import _count_non_control_transactions
 from charles_mcp.reverse.storage import SQLiteStore
@@ -288,6 +290,185 @@ async def test_live_analysis_service_caps_snapshot_history(tmp_path: Path):
 
     assert len(stopped["snapshot_capture_ids"]) == 2
     assert stopped["latest_capture_id"] == stopped["snapshot_capture_ids"][-1]
+    assert len(store.list_captures(limit=100)) == 2
+    assert list(config.temp_dir.iterdir()) == []
+    with sqlite3.connect(config.database_path) as conn:
+        stored_entries = conn.execute("SELECT COUNT(*) FROM entries").fetchone()[0]
+        stored_blobs = conn.execute("SELECT COUNT(*) FROM body_blobs").fetchone()[0]
+    assert stored_blobs == stored_entries
+
+
+@pytest.mark.asyncio
+async def test_live_retention_rejects_oversized_storage_and_removes_snapshot(tmp_path: Path):
+    config = VNextConfig(state_root=tmp_path / "state")
+    store = SQLiteStore(config.database_path)
+    control = _FakeControlService([_build_snapshot(), _build_snapshot("/new")], recording=True)
+    service = LiveAnalysisService(
+        control_service=control,  # type: ignore[arg-type]
+        ingest_service=IngestService(config, store),
+        query_service=QueryService(store),
+        temp_dir=config.temp_dir,
+        storage_max_bytes=1,
+    )
+    started = await service.start(start_recording_if_stopped=False)
+
+    with pytest.raises(ValueError, match="STORAGE_MAX_BYTES"):
+        await service.read(live_session_id=started["live_session_id"])
+
+    assert store.list_captures(limit=10) == []
+    assert list(config.temp_dir.iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_expired_managed_session_restores_recording(tmp_path: Path, monkeypatch):
+    config = VNextConfig(state_root=tmp_path / "state")
+    store = SQLiteStore(config.database_path)
+    control = _FakeControlService([_build_snapshot()], recording=False)
+    service = LiveAnalysisService(
+        control_service=control,  # type: ignore[arg-type]
+        ingest_service=IngestService(config, store),
+        query_service=QueryService(store),
+        temp_dir=config.temp_dir,
+        session_ttl_seconds=1,
+    )
+    clock = [0.0]
+    monkeypatch.setattr(
+        "charles_mcp.reverse.services.live_analysis_service.time.monotonic", lambda: clock[0]
+    )
+    await service.start()
+    assert control.recording is True
+
+    clock[0] = 2.0
+    status = await service.status()
+    assert status["active_live_sessions"] == []
+    assert control.recording is False
+
+
+@pytest.mark.asyncio
+async def test_idle_managed_session_expires_without_another_tool_call(tmp_path: Path):
+    config = VNextConfig(state_root=tmp_path / "state")
+    store = SQLiteStore(config.database_path)
+    control = _FakeControlService([_build_snapshot()], recording=False)
+    service = LiveAnalysisService(
+        control_service=control,  # type: ignore[arg-type]
+        ingest_service=IngestService(config, store),
+        query_service=QueryService(store),
+        temp_dir=config.temp_dir,
+        session_ttl_seconds=1,
+    )
+    await service.start()
+    assert control.recording is True
+    await asyncio.sleep(1.15)
+    assert control.recording is False
+    assert service._sessions == {}
+
+
+@pytest.mark.asyncio
+async def test_slow_snapshot_does_not_expire_active_read(tmp_path: Path):
+    config = VNextConfig(state_root=tmp_path / "state")
+    store = SQLiteStore(config.database_path)
+    reading = asyncio.Event()
+    release = asyncio.Event()
+
+    class SlowControl(_FakeControlService):
+        async def export_session_xml(self) -> str:
+            self.index += 1
+            if self.index > 1:
+                reading.set()
+                await release.wait()
+            return _build_snapshot("/entry")
+
+    control = SlowControl([_build_snapshot("/entry")], recording=False)
+    service = LiveAnalysisService(
+        control_service=control,  # type: ignore[arg-type]
+        ingest_service=IngestService(config, store),
+        query_service=QueryService(store),
+        temp_dir=config.temp_dir,
+        session_ttl_seconds=1,
+    )
+    started = await service.start()
+    task = asyncio.create_task(service.read(live_session_id=started["live_session_id"]))
+    await reading.wait()
+    await asyncio.sleep(1.15)
+    assert control.recording is True
+    assert started["live_session_id"] in service._sessions
+
+    release.set()
+    await task
+    await service.close_all()
+    assert control.recording is False
+
+
+@pytest.mark.asyncio
+async def test_close_all_transfers_managed_recording_ownership(tmp_path: Path):
+    config = VNextConfig(state_root=tmp_path / "state")
+    store = SQLiteStore(config.database_path)
+    control = _FakeControlService([_build_snapshot()], recording=False)
+    service = LiveAnalysisService(
+        control_service=control,  # type: ignore[arg-type]
+        ingest_service=IngestService(config, store),
+        query_service=QueryService(store),
+        temp_dir=config.temp_dir,
+    )
+    first = await service.start()
+    second = await service.start()
+    await service.stop(live_session_id=first["live_session_id"])
+    assert control.recording is True
+    assert (await service.status(second["live_session_id"]))["live_session"]["managed_recording"] is True
+
+    await service.close_all()
+    assert control.recording is False
+
+
+@pytest.mark.asyncio
+async def test_cancelled_start_restores_managed_recording(tmp_path: Path):
+    config = VNextConfig(state_root=tmp_path / "state")
+    store = SQLiteStore(config.database_path)
+
+    class CancellingControl(_FakeControlService):
+        async def export_session_xml(self) -> str:
+            raise asyncio.CancelledError()
+
+    control = CancellingControl([_build_snapshot()], recording=False)
+    service = LiveAnalysisService(
+        control_service=control,  # type: ignore[arg-type]
+        ingest_service=IngestService(config, store),
+        query_service=QueryService(store),
+        temp_dir=config.temp_dir,
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await service.start()
+    assert control.recording is False
+
+
+def test_live_retention_expires_old_snapshots_but_keeps_history_imports(tmp_path: Path):
+    config = VNextConfig(state_root=tmp_path / "state")
+    store = SQLiteStore(config.database_path)
+    ingest = IngestService(config, store)
+    source = tmp_path / "source.xml"
+    source.write_text(_build_snapshot("/entry"), encoding="utf-8")
+    history = ingest.import_session(
+        path=str(source), source_format=CaptureSourceFormat.XML,
+        source_kind=CaptureSourceKind.HISTORY_IMPORT,
+    )
+    live = ingest.import_session(
+        path=str(source), source_format=CaptureSourceFormat.XML,
+        source_kind=CaptureSourceKind.LIVE_SNAPSHOT,
+    )
+    with sqlite3.connect(config.database_path) as conn:
+        conn.execute(
+            "UPDATE captures SET metadata_json = ? WHERE capture_id = ?",
+            ('{"imported_at":"2020-01-01T00:00:00+00:00"}', live["capture_id"]),
+        )
+
+    LiveAnalysisService(
+        control_service=_FakeControlService([_build_snapshot()], recording=True),  # type: ignore[arg-type]
+        ingest_service=ingest,
+        query_service=QueryService(store),
+        temp_dir=config.temp_dir,
+    )
+    assert store.get_capture(live["capture_id"]) is None
+    assert store.get_capture(history["capture_id"]) is not None
 
 
 def test_count_non_control_transactions_rejects_dtd_entities():

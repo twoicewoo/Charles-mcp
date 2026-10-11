@@ -187,6 +187,10 @@ Step 6 — Report:
 | `CHARLES_MANAGE_LIFECYCLE` | `false` | Whether the MCP server should manage Charles startup and shutdown |
 | `CHARLES_REVERSE_STATE_DIR` | `${CHARLES_STATE_DIR}/reverse` | State root for reverse-analysis artifacts and SQLite data |
 | `CHARLES_VNEXT_STATE_DIR` | legacy | Legacy reverse-analysis state root. On first startup, `charles-mcp` migrates it into `CHARLES_REVERSE_STATE_DIR` automatically |
+| `CHARLES_REVERSE_LIVE_SNAPSHOT_MAX_BYTES` | `67108864` | Maximum bytes in one live export |
+| `CHARLES_REVERSE_LIVE_SNAPSHOT_HISTORY_LIMIT` | `20` | Maximum retained live snapshots globally |
+| `CHARLES_REVERSE_LIVE_STORAGE_MAX_BYTES` | `268435456` | SQLite body-byte budget for retained live snapshots |
+| `CHARLES_REVERSE_LIVE_STORAGE_MAX_AGE_SECONDS` | `86400` | Live-snapshot retention age; explicit history imports are preserved |
 
 ## Recommended Flows
 
@@ -283,6 +287,8 @@ This README documents the recommended tool surface only. Compatibility-only alia
 | `reverse_analyze_live_login_flow` | Scores new live traffic for login/auth relevance and summarizes next actions | When tracing login or token bootstrap flows |
 | `reverse_analyze_live_api_flow` | Scores new live traffic for API workflow relevance and summarizes next actions | When tracing structured business API traffic |
 | `reverse_analyze_live_signature_flow` | Focuses new live traffic on signature-sensitive requests and mutation planning | When targeting signing, nonce, or timestamp defenses |
+
+Traffic-analysis output masks captured header values, cookies, query values, and body content by default. Set `include_sensitive=true` on a single detail or decode call only when raw values are explicitly needed. `reverse_replay_entry` is preview-only by default; execution requires both `execute=true` and an exact target hostname in `allowed_hosts`. Redirects are never followed. Live snapshots are temporary: raw exports are removed after import, and SQLite retention is bounded by count, bytes, and age. Explicit history imports are not pruned.
 
 ## Key Behavior
 

@@ -92,6 +92,8 @@ def _build_signature_report(signature_candidates: dict[str, Any] | None) -> dict
 def _build_replay_report(replay_result: dict[str, Any] | None) -> dict[str, Any] | None:
     if replay_result is None:
         return None
+    if not replay_result.get("executed"):
+        return {"execution_status": "preview", "target_host": replay_result["preview"]["target_host"]}
     run = replay_result.get("run", {})
     diff = run.get("diff_summary", {})
     return {
@@ -312,8 +314,23 @@ def _build_mutation_plan(
         "baseline_entry_id": entry["entry_id"],
         "workflow": workflow_name,
         "selection_basis": list(dict.fromkeys(selection_basis))[:10],
-        "targets": targets,
-        "variants": variants,
+        "targets": [
+            {**target, "observed_values": ["[REDACTED]"] if target["observed_values"] else []}
+            for target in targets
+        ],
+        "variants": [
+            {
+                **variant,
+                "replay_recipe": {
+                    key: (
+                        {name: "[REDACTED]" if value else value for name, value in payload.items()}
+                        if isinstance(payload, dict) else "[REDACTED]" if payload else payload
+                    )
+                    for key, payload in variant["replay_recipe"].items()
+                },
+            }
+            for variant in variants
+        ],
         "execution_order": [variant["variant_id"] for variant in variants],
         "safety_notes": [
             "Do not mutate multiple high-risk fields at once.",

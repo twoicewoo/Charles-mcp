@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import time
 from typing import Any
-from urllib.parse import parse_qs, urlencode
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 import httpx
 
@@ -29,6 +29,7 @@ from charles_mcp.reverse.services.common import (
     hash_payload,
     new_identifier,
 )
+from charles_mcp.reverse.services.redaction import redact_headers, redact_url
 from charles_mcp.reverse.storage import SQLiteStore
 
 
@@ -48,7 +49,9 @@ class ReplayService:
         json_overrides: dict[str, Any] | None = None,
         form_overrides: dict[str, Any] | None = None,
         body_text_override: str | None = None,
-        follow_redirects: bool = True,
+        execute: bool = False,
+        allowed_hosts: list[str] | None = None,
+        follow_redirects: bool = False,
         use_proxy: bool = False,
     ) -> dict[str, Any]:
         snapshot = self.store.get_entry_snapshot(entry_id)
@@ -87,17 +90,35 @@ class ReplayService:
         if content_type:
             headers["Content-Type"] = content_type
 
+        target_host = (urlsplit(url).hostname or "").lower()
+        preview = {
+            "method": entry.method,
+            "url": redact_url(url),
+            "headers": redact_headers(headers),
+            "body_bytes": len(content) if content is not None else 0,
+            "target_host": target_host,
+            "redirects_followed": False,
+        }
+        if not execute:
+            return {"executed": False, "preview": preview}
+        if follow_redirects:
+            raise ValueError("replay does not follow redirects; inspect and allowlist a new target separately")
+        if not allowed_hosts or target_host not in {host.lower() for host in allowed_hosts}:
+            raise ValueError("executing replay requires the exact target hostname in allowed_hosts")
+
         experiment = Experiment(
             experiment_id=new_identifier("experiment"),
             baseline_entry_id=entry_id,
             experiment_type=ExperimentType.REPLAY,
             target_surface=_infer_target_surface(query_overrides, header_overrides, json_overrides, form_overrides),
             mutation_strategy={
-                "query_overrides": query_overrides or {},
-                "header_overrides": header_overrides or {},
-                "json_overrides": json_overrides or {},
-                "form_overrides": form_overrides or {},
-                "body_text_override": body_text_override,
+                "mutation_types": [
+                    name for name, value in (
+                        ("query", query_overrides), ("header", header_overrides),
+                        ("json", json_overrides), ("form", form_overrides),
+                        ("body_text", body_text_override),
+                    ) if value is not None
+                ],
             },
             status="completed",
         )
@@ -107,7 +128,7 @@ class ReplayService:
         try:
             client_options: dict[str, Any] = {
                 "timeout": self.config.replay_timeout_seconds,
-                "follow_redirects": follow_redirects,
+                "follow_redirects": False,
                 "trust_env": False,
             }
             if use_proxy:
@@ -136,8 +157,8 @@ class ReplayService:
                 raw_text=response.text,
                 preservation_level=BodyPreservationLevel.RAW,
                 metadata={
-                    "headers": dict(response.headers),
-                    "final_url": str(response.url),
+                    "headers": redact_headers(dict(response.headers)),
+                    "final_url": redact_url(str(response.url)),
                 },
             )
             self.store.upsert_body_blob(response_blob)
@@ -158,7 +179,7 @@ class ReplayService:
                 "baseline_status": entry.status_code,
                 "replay_status": None,
                 "status_changed": True,
-                "error": str(exc),
+                "error": type(exc).__name__,
             }
 
         run = Run(
@@ -167,8 +188,8 @@ class ReplayService:
             variant_label="replay",
             request_snapshot={
                 "method": entry.method,
-                "url": url,
-                "headers": headers,
+                "url": redact_url(url),
+                "headers": redact_headers(headers),
             },
             execution_status=run_status,
             response_status=response.status_code if response is not None else None,
@@ -197,11 +218,13 @@ class ReplayService:
             self.store.upsert_finding(finding)
 
         return {
+            "executed": True,
+            "preview": preview,
             "experiment": experiment.model_dump(mode="json", exclude_none=True),
             "run": run.model_dump(mode="json", exclude_none=True),
             "response": {
                 "status_code": response.status_code,
-                "headers": dict(response.headers),
+                "headers": redact_headers(dict(response.headers)),
                 "body_blob_id": response_blob.body_blob_id if response_blob else None,
             }
             if response is not None

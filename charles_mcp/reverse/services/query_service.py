@@ -8,6 +8,7 @@ from typing import Any
 
 from charles_mcp.reverse.models import Entry, Finding, FindingSubjectType, FindingType
 from charles_mcp.reverse.services.common import new_identifier, parse_request_parameters
+from charles_mcp.reverse.services.redaction import REDACTED, redact_entry_detail, redact_query
 from charles_mcp.reverse.storage import SQLiteStore
 
 
@@ -53,11 +54,11 @@ class QueryService:
             "limit": limit,
         }
 
-    def get_entry_detail(self, *, entry_id: str) -> dict[str, Any]:
+    def get_entry_detail(self, *, entry_id: str, include_sensitive: bool = False) -> dict[str, Any]:
         snapshot = self.store.get_entry_snapshot(entry_id)
         if snapshot is None:
             raise ValueError(f"entry `{entry_id}` was not found")
-        return {
+        detail = {
             "entry": snapshot["entry"].model_dump(mode="json", exclude_none=True),
             "request": snapshot["request"].model_dump(mode="json", exclude_none=True)
             if snapshot["request"]
@@ -76,16 +77,22 @@ class QueryService:
                 for artifact in snapshot["decoded_artifacts"]
             ],
         }
+        return detail if include_sensitive else redact_entry_detail(detail)
 
     def list_findings(
         self,
         *,
         subject_type: str | None = None,
         subject_id: str | None = None,
+        include_sensitive: bool = False,
     ) -> list[dict[str, Any]]:
         normalized_subject = FindingSubjectType(subject_type) if subject_type else None
         findings = self.store.list_findings(subject_type=normalized_subject, subject_id=subject_id)
-        return [finding.model_dump(mode="json", exclude_none=True) for finding in findings]
+        results = [finding.model_dump(mode="json", exclude_none=True) for finding in findings]
+        if not include_sensitive:
+            for result in results:
+                result["evidence"] = {"redacted": True}
+        return results
 
     def discover_signature_candidates(self, *, entry_ids: list[str]) -> dict[str, Any]:
         if len(entry_ids) < 2:
@@ -126,7 +133,7 @@ class QueryService:
             candidates.append(
                 {
                     "field": field,
-                    "distinct_values": distinct_values[:5],
+                    "distinct_values": [REDACTED] if distinct_values else [],
                     "observed_count": len(values),
                     "score": round(min(score, 0.99), 2),
                 }
@@ -165,7 +172,7 @@ class QueryService:
             "method": entry.method,
             "host": entry.host,
             "path": entry.path,
-            "query": entry.query,
+            "query": redact_query(entry.query),
             "status_code": entry.status_code,
             "timing_summary": entry.timing_summary,
             "size_summary": entry.size_summary,

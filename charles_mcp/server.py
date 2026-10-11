@@ -108,10 +108,13 @@ def create_server(
         try:
             yield deps
         finally:
-            if config.manage_charles_lifecycle:
-                await restore_config(config)
-            reverse_runtime.store.close()
-            logger.info("MCP service lifespan finished")
+            try:
+                await reverse_runtime.live_service.close_all()
+                if config.manage_charles_lifecycle:
+                    await restore_config(config)
+            finally:
+                reverse_runtime.store.close()
+                logger.info("MCP service lifespan finished")
 
     mcp = MCPServer("CharlesMCP", lifespan=lifespan)
     attach_tool_dependencies(mcp, deps)

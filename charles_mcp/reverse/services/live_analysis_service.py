@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -15,6 +17,8 @@ from charles_mcp.reverse.services.charles_control_service import CharlesControlS
 from charles_mcp.reverse.services.ingest_service import IngestService
 from charles_mcp.reverse.services.query_service import QueryService
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class LiveSessionState:
@@ -27,6 +31,7 @@ class LiveSessionState:
     cursor_transaction_count: int
     latest_capture_id: str | None = None
     snapshot_capture_ids: list[str] = field(default_factory=list)
+    is_reading: bool = False
 
 
 class LiveAnalysisService:
@@ -41,6 +46,9 @@ class LiveAnalysisService:
         temp_dir: Path,
         session_ttl_seconds: int = 900,
         snapshot_history_limit: int = 20,
+        snapshot_max_bytes: int = 64 * 1024 * 1024,
+        storage_max_bytes: int = 256 * 1024 * 1024,
+        storage_max_age_seconds: int = 86400,
     ) -> None:
         self.control_service = control_service
         self.ingest_service = ingest_service
@@ -49,7 +57,13 @@ class LiveAnalysisService:
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         self.session_ttl_seconds = max(session_ttl_seconds, 1)
         self.snapshot_history_limit = max(snapshot_history_limit, 1)
+        self.snapshot_max_bytes = max(snapshot_max_bytes, 1)
+        self.storage_max_bytes = max(storage_max_bytes, 1)
+        self.storage_max_age_seconds = max(storage_max_age_seconds, 1)
         self._sessions: dict[str, LiveSessionState] = {}
+        self._expiry_handles: dict[str, asyncio.TimerHandle] = {}
+        self._release_lock = asyncio.Lock()
+        self._enforce_snapshot_retention()
 
     async def start(
         self,
@@ -58,7 +72,9 @@ class LiveAnalysisService:
         start_recording_if_stopped: bool = True,
         snapshot_format: CaptureSourceFormat = CaptureSourceFormat.XML,
     ) -> dict:
-        self._prune_expired_sessions()
+        await self._prune_expired_sessions()
+        if reset_session and self._sessions:
+            raise ValueError("cannot reset Charles while another live analysis session is active")
         status = await self.control_service.get_recording_status()
         initial_recording = bool(status["is_recording"])
         managed_recording = False
@@ -70,7 +86,12 @@ class LiveAnalysisService:
             await self.control_service.start_recording()
             managed_recording = True
 
-        baseline_count = await self._current_transaction_count()
+        try:
+            baseline_count = await self._current_transaction_count()
+        except BaseException:
+            if managed_recording:
+                await self.control_service.stop_recording()
+            raise
         live_session_id = f"live-{uuid4().hex}"
         self._sessions[live_session_id] = LiveSessionState(
             live_session_id=live_session_id,
@@ -81,6 +102,7 @@ class LiveAnalysisService:
             baseline_transaction_count=baseline_count,
             cursor_transaction_count=baseline_count,
         )
+        self._schedule_expiry(live_session_id)
         return {
             "live_session_id": live_session_id,
             "initial_recording": initial_recording,
@@ -102,16 +124,32 @@ class LiveAnalysisService:
         limit: int = 20,
         advance: bool = True,
     ) -> dict:
-        self._prune_expired_sessions()
+        await self._prune_expired_sessions()
         if limit <= 0:
             raise ValueError("limit must be greater than 0")
         state = self._require(live_session_id)
         state.last_access_monotonic = time.monotonic()
-        imported = await self._snapshot_current_session(snapshot_format=snapshot_format)
+        self._schedule_expiry(live_session_id)
+        state.is_reading = True
+        try:
+            imported = await self._snapshot_current_session(snapshot_format=snapshot_format)
+        finally:
+            state.is_reading = False
+            state.last_access_monotonic = time.monotonic()
+            if live_session_id in self._sessions:
+                self._schedule_expiry(live_session_id)
+        previous_capture_id = state.latest_capture_id
         state.latest_capture_id = imported["capture_id"]
         state.snapshot_capture_ids.append(imported["capture_id"])
         if len(state.snapshot_capture_ids) > self.snapshot_history_limit:
             state.snapshot_capture_ids = state.snapshot_capture_ids[-self.snapshot_history_limit :]
+        try:
+            self._enforce_snapshot_retention()
+        except ValueError:
+            self.query_service.store.delete_live_capture(imported["capture_id"])
+            state.latest_capture_id = previous_capture_id
+            state.snapshot_capture_ids.remove(imported["capture_id"])
+            raise
 
         current_transaction_count = self.query_service.store.count_entries(
             capture_id=imported["capture_id"],
@@ -162,13 +200,9 @@ class LiveAnalysisService:
         }
 
     async def stop(self, *, live_session_id: str, restore_recording: bool = True) -> dict:
-        self._prune_expired_sessions()
+        await self._prune_expired_sessions()
         state = self._require(live_session_id)
-        restored = False
-        if restore_recording and state.managed_recording and not state.initial_recording:
-            await self.control_service.stop_recording()
-            restored = True
-        del self._sessions[live_session_id]
+        restored = await self._release_session(state, restore_recording=restore_recording)
         return {
             "live_session_id": live_session_id,
             "restored_recording": restored,
@@ -179,7 +213,7 @@ class LiveAnalysisService:
         }
 
     async def status(self, live_session_id: str | None = None) -> dict:
-        self._prune_expired_sessions()
+        await self._prune_expired_sessions()
         charles_status = await self.control_service.get_recording_status()
         if live_session_id is None:
             return {
@@ -206,15 +240,94 @@ class LiveAnalysisService:
             raise ValueError(f"live_session_id `{live_session_id}` was not found")
         return self._sessions[live_session_id]
 
-    def _prune_expired_sessions(self) -> None:
+    async def _prune_expired_sessions(self) -> None:
         now = time.monotonic()
         expired_ids = [
             live_session_id
             for live_session_id, state in self._sessions.items()
-            if now - state.last_access_monotonic > self.session_ttl_seconds
+            if not state.is_reading
+            and now - state.last_access_monotonic > self.session_ttl_seconds
         ]
         for live_session_id in expired_ids:
-            del self._sessions[live_session_id]
+            state = self._sessions.get(live_session_id)
+            if state is not None:
+                await self._release_session(state, restore_recording=True)
+
+    async def _release_session(self, state: LiveSessionState, *, restore_recording: bool) -> bool:
+        async with self._release_lock:
+            if state.live_session_id not in self._sessions:
+                return False
+            others = [
+                item for item in self._sessions.values()
+                if item.live_session_id != state.live_session_id
+            ]
+            restored = False
+            if restore_recording and state.managed_recording:
+                if others:
+                    others[0].managed_recording = True
+                    others[0].initial_recording = False
+                else:
+                    await self.control_service.stop_recording()
+                    restored = True
+            del self._sessions[state.live_session_id]
+            handle = self._expiry_handles.pop(state.live_session_id, None)
+            if handle is not None:
+                handle.cancel()
+            return restored
+
+    def _schedule_expiry(self, live_session_id: str, delay: float | None = None) -> None:
+        old = self._expiry_handles.pop(live_session_id, None)
+        if old is not None:
+            old.cancel()
+        loop = asyncio.get_running_loop()
+        self._expiry_handles[live_session_id] = loop.call_later(
+            self.session_ttl_seconds if delay is None else delay,
+            lambda: loop.create_task(self._expire_if_idle(live_session_id)),
+        )
+
+    async def _expire_if_idle(self, live_session_id: str) -> None:
+        state = self._sessions.get(live_session_id)
+        if state is None:
+            return
+        if state.is_reading:
+            self._schedule_expiry(live_session_id)
+            return
+        remaining = self.session_ttl_seconds - (time.monotonic() - state.last_access_monotonic)
+        if remaining > 0:
+            self._schedule_expiry(live_session_id, remaining)
+            return
+        try:
+            await self._release_session(state, restore_recording=True)
+        except Exception:
+            logger.exception("Failed to restore managed Charles recording for expired session")
+            if live_session_id in self._sessions:
+                self._schedule_expiry(live_session_id)
+
+    async def close_all(self) -> None:
+        """Restore managed recording on server shutdown, even without an explicit stop call."""
+        for state in list(self._sessions.values()):
+            await self._release_session(state, restore_recording=True)
+
+    def _enforce_snapshot_retention(self) -> None:
+        protected = {state.latest_capture_id for state in self._sessions.values()}
+        for capture_id in self.query_service.store.expired_live_capture_ids(
+            max_age_seconds=self.storage_max_age_seconds
+        ):
+            if capture_id not in protected:
+                self.query_service.store.delete_live_capture(capture_id)
+        capture_ids, used_bytes = self.query_service.store.live_capture_usage()
+        while capture_ids and (
+            len(capture_ids) > self.snapshot_history_limit or used_bytes > self.storage_max_bytes
+        ):
+            expired_id = next((item for item in capture_ids if item not in protected), None)
+            if expired_id is None:
+                raise ValueError("active live snapshots exceed CHARLES_REVERSE_LIVE_STORAGE_MAX_BYTES")
+            self.query_service.store.delete_live_capture(expired_id)
+            for state in self._sessions.values():
+                state.snapshot_capture_ids = [
+                    item for item in state.snapshot_capture_ids if item != expired_id
+                ]
+            capture_ids, used_bytes = self.query_service.store.live_capture_usage()
 
     async def _current_transaction_count(self) -> int:
         xml = await self.control_service.export_session_xml()
@@ -223,18 +336,23 @@ class LiveAnalysisService:
     async def _snapshot_current_session(self, *, snapshot_format: CaptureSourceFormat) -> dict:
         if snapshot_format == CaptureSourceFormat.XML:
             path = self.temp_dir / f"{uuid4().hex}.xml"
-            path.write_text(await self.control_service.export_session_xml(), encoding="utf-8")
+            payload = (await self.control_service.export_session_xml()).encode("utf-8")
         elif snapshot_format == CaptureSourceFormat.NATIVE:
             path = self.temp_dir / f"{uuid4().hex}.chls"
-            path.write_bytes(await self.control_service.download_session_native())
+            payload = await self.control_service.download_session_native()
         else:
             raise ValueError("live snapshot supports only xml or native")
-
-        return self.ingest_service.import_session(
-            path=str(path),
-            source_format=snapshot_format,
-            source_kind=CaptureSourceKind.LIVE_SNAPSHOT,
-        )
+        if len(payload) > self.snapshot_max_bytes:
+            raise ValueError("live snapshot exceeds CHARLES_REVERSE_LIVE_SNAPSHOT_MAX_BYTES")
+        try:
+            path.write_bytes(payload)
+            return self.ingest_service.import_session(
+                path=str(path),
+                source_format=snapshot_format,
+                source_kind=CaptureSourceKind.LIVE_SNAPSHOT,
+            )
+        finally:
+            path.unlink(missing_ok=True)
 
 
 def _count_non_control_transactions(xml: str) -> int:

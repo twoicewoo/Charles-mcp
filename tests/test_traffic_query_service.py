@@ -87,6 +87,7 @@ async def test_history_detail_remains_bound_to_summary_recording() -> None:
         source="history",
         entry_id=entry_id,
         include_full_body=True,
+        include_sensitive=True,
     )
 
     assert detail.detail.entry.recording_path == "package/old.chlsj"

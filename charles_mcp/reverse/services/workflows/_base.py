@@ -107,10 +107,14 @@ class _BaseLiveWorkflow:
         descriptor_path: str | None = None,
         message_type: str | None = None,
         run_replay: bool = False,
+        replay_execute: bool = False,
+        replay_allowed_hosts: list[str] | None = None,
         replay_json_overrides: dict[str, Any] | None = None,
         replay_use_proxy: bool = False,
         **extra: Any,
     ) -> dict[str, Any]:
+        if replay_execute and not run_replay:
+            raise ValueError("replay_execute requires run_replay=true")
         resolved_keywords = self._resolve_path_keywords(path_keywords)
         live_result = await self.live_service.read(
             live_session_id=live_session_id,
@@ -131,6 +135,8 @@ class _BaseLiveWorkflow:
             message_type=message_type,
             decode_bodies=decode_bodies,
             run_replay=run_replay,
+            replay_execute=replay_execute,
+            replay_allowed_hosts=replay_allowed_hosts,
             replay_json_overrides=replay_json_overrides,
             replay_use_proxy=replay_use_proxy,
             mutation_policy=self._resolve_mutation_policy(**extra),
@@ -155,7 +161,7 @@ class _BaseLiveWorkflow:
                 message_type=message_type,
             )
         except Exception as exc:
-            return {"entry_id": entry_id, "side": side, "decode_error": str(exc)}
+            return {"entry_id": entry_id, "side": side, "decode_error": type(exc).__name__}
 
     async def _build_workflow_result(
         self,
@@ -169,6 +175,8 @@ class _BaseLiveWorkflow:
         message_type: str | None,
         decode_bodies: bool,
         run_replay: bool,
+        replay_execute: bool,
+        replay_allowed_hosts: list[str] | None,
         replay_json_overrides: dict[str, Any] | None,
         replay_use_proxy: bool,
         mutation_policy: dict[str, Any],
@@ -267,6 +275,9 @@ class _BaseLiveWorkflow:
         selected = candidates[0]
         selected_entry_id = selected["entry_id"]
         selected_detail = self.query_service.get_entry_detail(entry_id=selected_entry_id)
+        raw_detail = self.query_service.get_entry_detail(
+            entry_id=selected_entry_id, include_sensitive=True
+        )
         decoded_request = None
         decoded_response = None
         if decode_bodies:
@@ -293,6 +304,8 @@ class _BaseLiveWorkflow:
             replay_result = await self.replay_service.replay_entry(
                 entry_id=selected_entry_id,
                 json_overrides=replay_json_overrides,
+                execute=replay_execute,
+                allowed_hosts=replay_allowed_hosts,
                 use_proxy=replay_use_proxy,
             )
 
@@ -313,7 +326,9 @@ class _BaseLiveWorkflow:
             ]
 
         replay_outcome = None
-        if replay_result is not None:
+        if replay_result is not None and not replay_result.get("executed"):
+            replay_outcome = {"status": "preview", "target_host": replay_result["preview"]["target_host"]}
+        elif replay_result is not None and replay_result.get("run"):
             replay_outcome = {
                 "status": replay_result["run"]["execution_status"],
                 "baseline_status": replay_result["run"]["diff_summary"].get("baseline_status"),
@@ -323,7 +338,7 @@ class _BaseLiveWorkflow:
 
         mutation_plan = _build_mutation_plan(
             workflow_name=workflow_name,
-            selected_entry_detail=selected_detail,
+            selected_entry_detail=raw_detail,
             signature_candidates=signature_candidates,
             related_findings=related_findings,
             mutation_policy=mutation_policy,

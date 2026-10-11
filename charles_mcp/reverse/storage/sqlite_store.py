@@ -8,7 +8,7 @@ import sqlite3
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -642,6 +642,114 @@ class SQLiteStore:
             )
             for row in rows
         ]
+
+    def live_capture_usage(self) -> tuple[list[str], int]:
+        """Return live captures oldest first and their stored body bytes."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT capture_id FROM captures WHERE source_kind = 'live_snapshot' ORDER BY rowid"
+            ).fetchall()
+            usage = conn.execute(
+                """
+                SELECT COALESCE(SUM(COALESCE(b.byte_length, LENGTH(b.raw_bytes), LENGTH(b.raw_text), 0)), 0)
+                FROM body_blobs b
+                WHERE b.body_blob_id IN (
+                    SELECT r.body_blob_id FROM requests r JOIN entries e ON e.entry_id = r.entry_id
+                    JOIN captures c ON c.capture_id = e.capture_id WHERE c.source_kind = 'live_snapshot'
+                    UNION
+                    SELECT r.body_blob_id FROM responses r JOIN entries e ON e.entry_id = r.entry_id
+                    JOIN captures c ON c.capture_id = e.capture_id WHERE c.source_kind = 'live_snapshot'
+                )
+                """
+            ).fetchone()
+        return [row["capture_id"] for row in rows], int(usage[0])
+
+    def expired_live_capture_ids(self, *, max_age_seconds: int) -> list[str]:
+        cutoff = datetime.now(timezone.utc).timestamp() - max_age_seconds
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT capture_id, metadata_json FROM captures WHERE source_kind = 'live_snapshot'"
+            ).fetchall()
+        expired = []
+        for row in rows:
+            imported_at = _load_json(row["metadata_json"]).get("imported_at")
+            try:
+                created = datetime.fromisoformat(imported_at).timestamp() if imported_at else 0
+            except (TypeError, ValueError):
+                created = 0
+            if created < cutoff:
+                expired.append(row["capture_id"])
+        return expired
+
+    def delete_live_capture(self, capture_id: str) -> bool:
+        """Delete one temporary live capture and unreferenced dependent blobs atomically."""
+        with self.transaction() as conn:
+            row = conn.execute(
+                "SELECT source_kind FROM captures WHERE capture_id = ?", (capture_id,)
+            ).fetchone()
+            if row is None:
+                return False
+            if row["source_kind"] != "live_snapshot":
+                raise ValueError("only live snapshots may be deleted by retention")
+            entry_ids = [
+                item[0] for item in conn.execute(
+                    "SELECT entry_id FROM entries WHERE capture_id = ?", (capture_id,)
+                ).fetchall()
+            ]
+            blob_ids = [
+                item[0] for item in conn.execute(
+                    """
+                    SELECT body_blob_id FROM requests WHERE entry_id IN
+                    (SELECT entry_id FROM entries WHERE capture_id = ?)
+                    UNION SELECT body_blob_id FROM responses WHERE entry_id IN
+                    (SELECT entry_id FROM entries WHERE capture_id = ?)
+                    """,
+                    (capture_id, capture_id),
+                ).fetchall() if item[0] is not None
+            ]
+            experiment_ids = [
+                item[0] for item in conn.execute(
+                    "SELECT experiment_id FROM experiments WHERE baseline_entry_id IN "
+                    "(SELECT entry_id FROM entries WHERE capture_id = ?)", (capture_id,)
+                ).fetchall()
+            ]
+            if experiment_ids:
+                placeholders = ",".join("?" for _ in experiment_ids)
+                blob_ids.extend(
+                    item[0] for item in conn.execute(
+                        f"SELECT response_body_blob_id FROM runs WHERE experiment_id IN ({placeholders})",
+                        experiment_ids,
+                    ).fetchall() if item[0] is not None
+                )
+                run_ids = [
+                    item[0] for item in conn.execute(
+                        f"SELECT run_id FROM runs WHERE experiment_id IN ({placeholders})",
+                        experiment_ids,
+                    ).fetchall()
+                ]
+                for run_id in run_ids:
+                    conn.execute(
+                        "DELETE FROM findings WHERE subject_type = 'run' AND subject_id = ?", (run_id,)
+                    )
+            for entry_id in entry_ids:
+                conn.execute(
+                    "DELETE FROM findings WHERE subject_type = 'entry' AND subject_id = ?", (entry_id,)
+                )
+            conn.execute(
+                "DELETE FROM findings WHERE subject_type = 'capture' AND subject_id = ?", (capture_id,)
+            )
+            conn.execute("DELETE FROM captures WHERE capture_id = ?", (capture_id,))
+            for blob_id in set(blob_ids):
+                conn.execute(
+                    """
+                    DELETE FROM body_blobs WHERE body_blob_id = ?
+                    AND NOT EXISTS (SELECT 1 FROM requests WHERE body_blob_id = ?)
+                    AND NOT EXISTS (SELECT 1 FROM responses WHERE body_blob_id = ?)
+                    AND NOT EXISTS (SELECT 1 FROM runs WHERE response_body_blob_id = ?)
+                    """,
+                    (blob_id, blob_id, blob_id, blob_id),
+                )
+            return True
 
     def list_entries(
         self,

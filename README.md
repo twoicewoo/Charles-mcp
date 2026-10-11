@@ -187,6 +187,10 @@ Step 6 — Report:
 | `CHARLES_MANAGE_LIFECYCLE` | `false` | 是否由 MCP server 管理 Charles 启停 |
 | `CHARLES_REVERSE_STATE_DIR` | `${CHARLES_STATE_DIR}/reverse` | reverse-analysis 的 SQLite 与工件状态目录 |
 | `CHARLES_VNEXT_STATE_DIR` | 旧变量 | 旧版 reverse-analysis 状态目录。主 `charles-mcp` 首次启动时会自动迁移到 `CHARLES_REVERSE_STATE_DIR` |
+| `CHARLES_REVERSE_LIVE_SNAPSHOT_MAX_BYTES` | `67108864` | 单次 live 导出最大字节数，超过则拒绝导入 |
+| `CHARLES_REVERSE_LIVE_SNAPSHOT_HISTORY_LIMIT` | `20` | 全局最多保留的 live 快照数 |
+| `CHARLES_REVERSE_LIVE_STORAGE_MAX_BYTES` | `268435456` | live 快照正文在 SQLite 中的总保留预算 |
+| `CHARLES_REVERSE_LIVE_STORAGE_MAX_AGE_SECONDS` | `86400` | live 快照最长保留时间；显式历史导入不受影响 |
 
 ## 推荐使用路径
 
@@ -283,6 +287,8 @@ README 只覆盖推荐使用的主流程工具。兼容保留入口不在本文�
 | `reverse_analyze_live_login_flow` | 对新增 live 流量做登录 / 鉴权相关打分并给出后续动作建议 | 想分析登录、拿 token、建立 session 的流程时 |
 | `reverse_analyze_live_api_flow` | 对新增 live 流量做 API 工作流打分并给出后续动作建议 | 想分析业务 API 请求链路时 |
 | `reverse_analyze_live_signature_flow` | 聚焦签名敏感请求，并生成更偏向变异实验的建议 | 想分析 sign、nonce、timestamp 等保护机制时 |
+
+抓包分析结果默认隐藏 header 值、cookie、URL 查询值和正文。确需读取原值时，对单条明细或解码调用显式设置 `include_sensitive=true`。`reverse_replay_entry` 默认仅预览且不发请求；真实执行必须同时设置 `execute=true` 和包含目标域名的 `allowed_hosts`，并且不会自动跟随重定向。live 快照是临时数据，原始导出在导入后删除，SQLite 中按数量、字节和时间清理；需要长期保存时先显式导入历史文件。
 
 ## 关键使用约定
 

@@ -145,7 +145,7 @@ async def test_workflow_service_analyzes_live_login_flow(tmp_path: Path):
         limit=20,
         advance=True,
         decode_bodies=True,
-        run_replay=False,
+        run_replay=True,
     )
 
     assert result["analysis_status"] == "ok"
@@ -153,6 +153,7 @@ async def test_workflow_service_analyzes_live_login_flow(tmp_path: Path):
     assert result["summary"]["login_candidate_count"] >= 1
     assert result["report"]["selected_request"]["path"] == "/login"
     assert result["report"]["decoded_observations"]
+    assert result["evidence"]["replay_result"]["executed"] is False
     assert result["report"]["signature_analysis"]["candidate_count"] >= 1
     assert result["summary"]["mutation_plan_overview"]["candidate_target_count"] >= 1
     assert "Prioritize" in result["report"]["mutation_strategy"]

@@ -252,7 +252,7 @@ async def test_analyze_recorded_traffic_returns_summary_and_filters_static_asset
     assert result["filtered_out_by_class"]["static_asset"] == 1
     assert result["items"][0]["path"] == "/api/login"
     assert result["items"][0]["resource_class"] == "api_candidate"
-    assert result["items"][0]["request_header_highlights"]["authorization"] == "Bearer live-secret"
+    assert result["items"][0]["request_header_highlights"]["authorization"] == "[REDACTED]"
     assert result["items"][0]["recording_path"]
 
 
@@ -310,9 +310,9 @@ async def test_get_traffic_entry_detail_returns_history_detail_view(
     assert detail["detail"]["entry"]["request"]["body"]["kind"] == "json"
     req_headers = detail["detail"]["entry"]["request"]["headers"]
     auth = next(h for h in req_headers if h["name"] == "Authorization")
-    assert auth["value"] == "Bearer live-secret"
+    assert auth["value"] == "[REDACTED]"
     assert "header_map" not in detail["detail"]["entry"]["request"]
-    assert detail["detail"]["entry"]["response"]["body"]["preview_text"] == '{"ok":true,"access_token":"token-value"}'
+    assert detail["detail"]["entry"]["response"]["body"]["preview_text"] == "[REDACTED]"
 
 
 @pytest.mark.asyncio
@@ -355,7 +355,7 @@ async def test_query_live_capture_entries_returns_full_summary(
         )
     )
 
-    assert result["items"][0]["request_header_highlights"]["authorization"] == "Bearer live-secret"
+    assert result["items"][0]["request_header_highlights"]["authorization"] == "[REDACTED]"
 
 
 @pytest.mark.asyncio
@@ -462,6 +462,7 @@ async def test_analyze_recorded_traffic_supports_structured_filters_and_detail_f
                 "source": "history",
                 "entry_id": summary["items"][0]["entry_id"],
                 "include_full_body": True,
+                "include_sensitive": True,
             },
         )
     )

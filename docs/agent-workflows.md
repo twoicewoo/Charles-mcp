@@ -654,6 +654,8 @@ reverse_import_session(path="/path/to/export.xml")
 reverse_query_entries(capture_id=..., host_contains="api.example.com", path_contains="/v1/order")
 reverse_discover_signature_candidates(entry_ids=["...", "...", "..."])
 reverse_replay_entry(entry_id="...", json_overrides={"timestamp": 0})
+# Only after the user authorizes a live request to this exact host:
+reverse_replay_entry(entry_id="...", json_overrides={"timestamp": 0}, execute=true, allowed_hosts=["api.example.com"])
 reverse_list_findings(subject_id="...")
 ```
 

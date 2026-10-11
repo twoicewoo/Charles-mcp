@@ -20,6 +20,7 @@ from charles_mcp.services.traffic_analysis import TrafficAnalysisService
 from charles_mcp.services.traffic_cache import SUMMARY_BODY_MODE, TrafficEntryCache
 from charles_mcp.services.traffic_normalizer import TrafficNormalizer
 from charles_mcp.services.traffic_query_models import PreparedTrafficEntries
+from charles_mcp.services.traffic_redaction import redact_entry, redact_summary
 
 # Cached normalize/classify result. entry=None means the raw entry was
 # excluded by the preset and never normalized; we still cache the
@@ -156,12 +157,12 @@ class TrafficQueryOrchestrator:
         matched_summaries = []
         if include_items:
             matched_summaries = [
-                self.analysis_service.summarize_entry(
+                redact_summary(self.analysis_service.summarize_entry(
                     entry,
                     match,
                     max_headers_per_side=query.max_headers_per_side,
                     include_body_preview=query.include_body_preview,
-                )
+                ))
                 for entry, match in matched_entries[: query.max_items]
             ]
 
@@ -190,6 +191,7 @@ class TrafficQueryOrchestrator:
         capture_id: str | None = None,
         recording_path: str | None = None,
         include_full_body: bool = False,
+        include_sensitive: bool = False,
         max_body_chars: int = 4096,
     ) -> TrafficDetailResult:
         if source not in {"live", "history"}:
@@ -230,6 +232,10 @@ class TrafficQueryOrchestrator:
             raise ValueError(f"traffic entry `{entry_id}` was not found in `{identity}`")
 
         detail = self.analysis_service.build_detail(entry)
+        if not include_sensitive:
+            detail = detail.model_copy(
+                update={"entry": redact_entry(detail.entry), "raw_body_included": False}
+            )
         warnings: list[str] = []
         estimated_chars = len(detail.model_dump_json(exclude_none=True))
         if estimated_chars > 12_000:
@@ -303,6 +309,7 @@ class TrafficQueryOrchestrator:
                 capture_id=capture_id,
                 recording_path=recording_path,
                 include_full_body=True,
+                include_sensitive=True,
                 max_preview_chars=min(max_body_chars, 1024),
                 max_headers_per_side=16,
                 max_full_body_chars=max_body_chars,
@@ -428,6 +435,7 @@ class TrafficQueryOrchestrator:
                         capture_id=capture_id,
                         recording_path=recording_path,
                         include_full_body=needs_body_search,
+                        include_sensitive=True,
                         max_preview_chars=effective_query.max_preview_chars,
                         max_headers_per_side=effective_query.max_headers_per_side,
                         max_full_body_chars=(
